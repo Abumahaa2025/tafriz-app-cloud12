@@ -35,8 +35,12 @@ export function matchesPlateStreet(plate: string, street: string, query: string)
   if (isSingleArabicLetter) {
     const letters = plateLetterTokens(p);
     if (letters.some((t) => t === q)) return true;
-    // لوحات ملتصقة مثل "ابج" بدون مسافات
-    if (letters.some((t) => t.length > 1 && [...t].includes(q))) return true;
+    // لوحات ملتصقة مع الرقم مثل "5227ابج" أو "ابج"
+    const glued = p
+      .replace(/[0-9]+/g, " ")
+      .split(" ")
+      .filter((t) => /^[\u0600-\u06FF]+$/.test(t));
+    if (glued.some((t) => t === q || (t.length > 1 && [...t].includes(q)))) return true;
     return false;
   }
 
