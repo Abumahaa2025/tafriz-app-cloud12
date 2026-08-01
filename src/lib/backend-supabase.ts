@@ -75,25 +75,70 @@ export const supabaseBackend: Backend = {
     const db = requireClient();
     const authEmail = toAuthEmail(identifierType, identifier);
 
-    const { data, error } = await db.auth.signUp({ email: authEmail, password });
+    // تسجيل برقم الجوال يستخدم بريدًا داخليًا وهميًا — أي محاولة Signup
+    // قد تطلق إيميل تأكيد من Supabase وتصل بسرعة إلى "email rate limit".
+    // الحل: لا نعتمد على إعادة الإرسال؛ إن فشل signup بسبب الحد/وجود الحساب
+    // نحاول تسجيل الدخول مباشرة ثم نُكمل بروفايل المستخدم.
+    let userId: string | null = null;
+    const { data, error } = await db.auth.signUp({
+      email: authEmail,
+      password,
+      options: { emailRedirectTo: undefined },
+    });
+
     if (error || !data.user) {
-      throw new BackendError("unknown", error?.message ?? "تعذّر إنشاء الحساب");
+      const msg = (error?.message ?? "").toLowerCase();
+      const recoverable =
+        msg.includes("rate limit") ||
+        msg.includes("already") ||
+        msg.includes("registered") ||
+        msg.includes("exists");
+
+      if (!recoverable) {
+        throw new BackendError("unknown", error?.message ?? "تعذّر إنشاء الحساب");
+      }
+
+      const { data: inData, error: inErr } = await db.auth.signInWithPassword({
+        email: authEmail,
+        password,
+      });
+      if (inErr || !inData.user) {
+        if (msg.includes("rate limit")) {
+          throw new BackendError(
+            "unknown",
+            "تم تجاوز حد التسجيل مؤقتًا. انتظر دقيقة ثم أعد المحاولة، أو استخدم تبويب تسجيل الدخول إذا كان الحساب قد أُنشئ."
+          );
+        }
+        throw new BackendError("unknown", error?.message ?? "تعذّر إنشاء الحساب");
+      }
+      userId = inData.user.id;
+    } else {
+      userId = data.user.id;
+      // إن كانت جلسة التأكيد غير مفعّلة قد لا تُعاد session بعد signup
+      if (!data.session) {
+        await db.auth.signInWithPassword({ email: authEmail, password });
+      }
     }
+
+    if (!userId) throw new BackendError("unknown", "تعذّر إنشاء الحساب");
 
     const isDesignatedOwner = OWNER_IDENTIFIER ? identifier === OWNER_IDENTIFIER : false;
 
-    const { error: insertError } = await db.from("profiles").insert({
-      id: data.user.id,
-      identifier_type: identifierType,
-      identifier,
-      status: isDesignatedOwner ? "approved" : "pending",
-      is_owner: isDesignatedOwner,
-      full_name: profile?.fullName || null,
-      city: profile?.city || null,
-      package_name: isDesignatedOwner ? "مالك التطبيق" : null,
-      last_seen_at: new Date().toISOString(),
-    });
-    if (insertError) throw new BackendError("unknown", insertError.message);
+    const { error: upsertError } = await db.from("profiles").upsert(
+      {
+        id: userId,
+        identifier_type: identifierType,
+        identifier,
+        status: isDesignatedOwner ? "approved" : "pending",
+        is_owner: isDesignatedOwner,
+        full_name: profile?.fullName || null,
+        city: profile?.city || null,
+        package_name: isDesignatedOwner ? "مالك التطبيق" : null,
+        last_seen_at: new Date().toISOString(),
+      },
+      { onConflict: "id" }
+    );
+    if (upsertError) throw new BackendError("unknown", upsertError.message);
 
     const user = await this.getCurrentUser();
     if (!user) throw new BackendError("unknown", "تعذّر تحميل بيانات الحساب بعد إنشائه");
