@@ -12,17 +12,31 @@ export function normalizeSearchText(raw: string): string {
   return out;
 }
 
-function plateLetterTokens(plateNorm: string): string[] {
-  return plateNorm
-    .split(" ")
-    .map((t) => t.trim())
-    .filter((t) => /^[\u0600-\u06FF]+$/.test(t));
+/**
+ * يستخرج حروف اللوحة فقط (رموز مفردة أو كتلة 1–3 أحرف ملتصقة بالرقم).
+ * لا يعامل أسماء الشوارع داخل حقل اللوحة كحروف لوحة.
+ */
+export function extractPlateLetters(plateNorm: string): string[] {
+  const out = new Set<string>();
+
+  // "5227 د ر" أو "د ر 5227"
+  for (const t of plateNorm.split(" ").map((x) => x.trim())) {
+    if (/^[\u0600-\u06FF]$/.test(t)) out.add(t);
+  }
+
+  // "5227ابج" / "ابج5227" — كتلة حروف اللوحة الملتصقة بالرقم فقط
+  for (const m of plateNorm.matchAll(/[0-9]+([\u0600-\u06FF]{1,3})|([\u0600-\u06FF]{1,3})[0-9]+/g)) {
+    const block = m[1] || m[2] || "";
+    for (const ch of block) out.add(ch);
+  }
+
+  return [...out];
 }
 
 /**
  * مطابقة بحث التشييك/سجل الفرز:
- * - حرف عربي واحد: يطابق فقط حروف اللوحة (رمز مستقل أو داخل كتلة حروف اللوحة)
- *   ولا يبحث في الشارع حتى لا تظهر لوحات د/ر بسبب كلمة في الشارع فيها «ج».
+ * - حرف عربي واحد: يطابق فقط حروف اللوحة، وليس الشارع
+ *   (حتى لا تظهر لوحات د/ر بسبب كلمة مثل «جدة» في الشارع).
  * - غير ذلك: يبحث في اللوحة والشارع بعد التطبيع.
  */
 export function matchesPlateStreet(plate: string, street: string, query: string): boolean {
@@ -33,15 +47,7 @@ export function matchesPlateStreet(plate: string, street: string, query: string)
 
   const isSingleArabicLetter = /^[\u0600-\u06FF]$/.test(q);
   if (isSingleArabicLetter) {
-    const letters = plateLetterTokens(p);
-    if (letters.some((t) => t === q)) return true;
-    // لوحات ملتصقة مع الرقم مثل "5227ابج" أو "ابج"
-    const glued = p
-      .replace(/[0-9]+/g, " ")
-      .split(" ")
-      .filter((t) => /^[\u0600-\u06FF]+$/.test(t));
-    if (glued.some((t) => t === q || (t.length > 1 && [...t].includes(q)))) return true;
-    return false;
+    return extractPlateLetters(p).includes(q);
   }
 
   return p.includes(q) || s.includes(q);

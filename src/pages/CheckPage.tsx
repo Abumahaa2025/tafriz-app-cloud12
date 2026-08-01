@@ -44,10 +44,9 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
   );
 
   React.useEffect(() => {
-    if (!isSearching) {
-      setDataHits([]);
-      return;
-    }
+    // امسح النتائج فورًا حتى لا تبقى نتائج بحث سابق ظاهرة أثناء التحميل
+    setDataHits([]);
+    if (!isSearching) return;
     let cancelled = false;
     const requested = query.trim();
     backend.searchSortHistory(requested).then((hits) => {

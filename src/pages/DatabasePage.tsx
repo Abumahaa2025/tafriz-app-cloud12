@@ -21,11 +21,9 @@ export default function DatabasePage({ onBack }: { onBack: () => void }) {
   }, []);
 
   React.useEffect(() => {
-    if (!isSearching) {
-      setSortResults([]);
-      setUploadResults([]);
-      return;
-    }
+    setSortResults([]);
+    setUploadResults([]);
+    if (!isSearching) return;
     let cancelled = false;
     const requested = query.trim();
     Promise.all([backend.searchSortHistory(requested), backend.searchUploads(requested)]).then(
