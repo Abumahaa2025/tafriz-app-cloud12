@@ -1,5 +1,6 @@
 import { supabase } from "./supabase-client";
 import { OWNER_IDENTIFIER } from "./owner-config";
+import { matchesPlateStreet } from "./search-text";
 import {
   AppUser,
   Backend,
@@ -482,13 +483,13 @@ export const supabaseBackend: Backend = {
   },
 
   async searchSortHistory(query) {
-    const q = query.trim().toLowerCase();
+    const q = query.trim();
     if (!q) return [];
     const history = await this.listSortHistory();
     const hits: SortHistorySearchHit[] = [];
     for (const entry of history) {
       for (const row of entry.matchedRows) {
-        if (row.plate.toLowerCase().includes(q) || row.street.toLowerCase().includes(q)) {
+        if (matchesPlateStreet(row.plate, row.street, q)) {
           hits.push({ entry, row });
         }
       }

@@ -18,6 +18,7 @@ import {
   normalizeActivationCodeInput,
   verifySignedActivationCode,
 } from "./activation-code";
+import { matchesPlateStreet } from "./search-text";
 
 // ملاحظة أمان: كلمة المرور هنا تُخزَّن كنص عادي محليًا على جهازك فقط، لأن
 // هذا الوضع "محلي للتجربة" وليس متصلًا بالإنترنت. بمجرد ما تضيف مفاتيح
@@ -298,12 +299,12 @@ export const localBackend: Backend = {
   },
 
   async searchSortHistory(query) {
-    const q = query.trim().toLowerCase();
+    const q = query.trim();
     if (!q) return [];
     const hits: SortHistorySearchHit[] = [];
     for (const entry of loadLocal<SortHistoryEntry[]>(SORT_HISTORY_KEY, [])) {
       for (const row of entry.matchedRows) {
-        if (row.plate.toLowerCase().includes(q) || row.street.toLowerCase().includes(q)) {
+        if (matchesPlateStreet(row.plate, row.street, q)) {
           hits.push({ entry, row });
         }
       }

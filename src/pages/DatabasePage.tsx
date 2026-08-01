@@ -26,8 +26,18 @@ export default function DatabasePage({ onBack }: { onBack: () => void }) {
       setUploadResults([]);
       return;
     }
-    backend.searchSortHistory(query).then(setSortResults);
-    backend.searchUploads(query).then(setUploadResults);
+    let cancelled = false;
+    const requested = query.trim();
+    Promise.all([backend.searchSortHistory(requested), backend.searchUploads(requested)]).then(
+      ([sortHits, uploadHits]) => {
+        if (cancelled) return;
+        setSortResults(sortHits);
+        setUploadResults(uploadHits);
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
   }, [query, isSearching]);
 
   return (

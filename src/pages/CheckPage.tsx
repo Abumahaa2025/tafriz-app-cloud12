@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { loadLocal, saveLocal } from "@/lib/storage";
 import { backend } from "@/lib/backend";
 import { SortHistorySearchHit } from "@/lib/backend-types";
+import { matchesPlateStreet, normalizeSearchText } from "@/lib/search-text";
 
 interface ChecklistItem {
   id: string;
@@ -29,13 +30,16 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
     setText("");
   }
 
-  const q = query.trim().toLowerCase();
+  const q = normalizeSearchText(query);
   const isSearching = q.length > 0;
 
   // بحث حي بأي حرف أو رقم: يفلتر عناصر التشييك، ويبحث كمان داخل نتائج
   // الفرز المحفوظة (رقم اللوحة / الشارع) عشان يطلع "كافة البيانات المرتبطة"
   const filteredItems = React.useMemo(
-    () => (isSearching ? items.filter((i) => i.text.toLowerCase().includes(q)) : items),
+    () =>
+      isSearching
+        ? items.filter((i) => normalizeSearchText(i.text).includes(q))
+        : items,
     [items, q, isSearching]
   );
 
@@ -44,8 +48,17 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
       setDataHits([]);
       return;
     }
-    backend.searchSortHistory(q).then(setDataHits);
-  }, [q, isSearching]);
+    let cancelled = false;
+    const requested = query.trim();
+    backend.searchSortHistory(requested).then((hits) => {
+      if (cancelled) return;
+      // حماية من نتائج طلب بحث قديم + تأكيد المطابقة على الحرف المطلوب
+      setDataHits(hits.filter((h) => matchesPlateStreet(h.row.plate, h.row.street, requested)));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [query, isSearching]);
 
   return (
     <div className="mx-auto flex max-w-md flex-col gap-4 px-4 pb-28 pt-4">
