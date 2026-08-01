@@ -28,6 +28,66 @@ function toAuthEmail(type: IdentifierType, identifier: string): string {
   return `phone${digits}@users.tafriz.app`;
 }
 
+/** صيغ البريد الداخلي المحتملة من المحاولات السابقة + الصيغة الحالية */
+function authEmailCandidates(type: IdentifierType, identifier: string): string[] {
+  if (type === "email") return [identifier.trim().toLowerCase()];
+  const digits = identifier.replace(/\D/g, "");
+  return [
+    `phone${digits}@users.tafriz.app`,
+    `${digits}@phone.tafriz.app`,
+    `phone${digits}@phone.tafriz.app`,
+  ];
+}
+
+function mapAuthError(message: string): BackendError {
+  const msg = message.toLowerCase();
+  if (msg.includes("email not confirmed") || msg.includes("not confirmed")) {
+    return new BackendError(
+      "not_allowed",
+      "الحساب موجود لكن غير مفعّل. عطّل Confirm email في Supabase أو أنشئ الحساب من جديد بعد ضبط المفتاح الخادمي."
+    );
+  }
+  if (msg.includes("rate limit")) {
+    return new BackendError(
+      "unknown",
+      "تم تجاوز حد التسجيل مؤقتًا. استخدم تبويب تسجيل الدخول، أو انتظر دقيقة ثم أعد المحاولة."
+    );
+  }
+  if (msg.includes("invalid") || msg.includes("credentials")) {
+    return new BackendError("bad_password", "رقم الجوال/البريد أو كلمة المرور غير صحيحة");
+  }
+  return new BackendError("unknown", message || "تعذّر إتمام العملية");
+}
+
+async function ensureProfile(
+  db: NonNullable<typeof supabase>,
+  userId: string,
+  identifierType: IdentifierType,
+  identifier: string,
+  profile?: { fullName?: string; city?: string }
+): Promise<AppUser> {
+  const isDesignatedOwner = OWNER_IDENTIFIER ? identifier === OWNER_IDENTIFIER : false;
+  const { error: upsertError } = await db.from("profiles").upsert(
+    {
+      id: userId,
+      identifier_type: identifierType,
+      identifier,
+      status: isDesignatedOwner ? "approved" : "pending",
+      is_owner: isDesignatedOwner,
+      full_name: profile?.fullName || null,
+      city: profile?.city || null,
+      package_name: isDesignatedOwner ? "مالك التطبيق" : null,
+      last_seen_at: new Date().toISOString(),
+    },
+    { onConflict: "id" }
+  );
+  if (upsertError) throw new BackendError("unknown", upsertError.message);
+
+  const { data, error } = await db.from("profiles").select("*").eq("id", userId).single();
+  if (error || !data) throw new BackendError("unknown", "تعذّر تحميل بيانات الحساب");
+  return rowToUser(data as ProfileRow);
+}
+
 // حد أمان لحجم كل رفعة (حتى مع Postgres الحقيقي، إرسال مئات الآلاف من
 // الصفوف بطلب واحد ثقيل جدًا على الشبكة) — أعلى بكثير من حد التخزين المحلي
 // لأن قاعدة بيانات حقيقية تتحمل أكثر بكثير من localStorage.
@@ -75,11 +135,31 @@ export const supabaseBackend: Backend = {
     const db = requireClient();
     const authEmail = toAuthEmail(identifierType, identifier);
 
-    // تسجيل برقم الجوال يستخدم بريدًا داخليًا وهميًا — أي محاولة Signup
-    // قد تطلق إيميل تأكيد من Supabase وتصل بسرعة إلى "email rate limit".
-    // الحل: لا نعتمد على إعادة الإرسال؛ إن فشل signup بسبب الحد/وجود الحساب
-    // نحاول تسجيل الدخول مباشرة ثم نُكمل بروفايل المستخدم.
-    let userId: string | null = null;
+    // المسار المفضّل: إنشاء مؤكَّد عبر API الخادمي (بدون إيميل تأكيد)
+    try {
+      const resp = await fetch("/api/auth-register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ identifierType, identifier, password, profile }),
+      });
+      if (resp.ok) {
+        const { error: inErr } = await db.auth.signInWithPassword({ email: authEmail, password });
+        if (inErr) throw mapAuthError(inErr.message);
+        const user = await this.getCurrentUser();
+        if (!user) throw new BackendError("unknown", "تعذّر تحميل بيانات الحساب بعد إنشائه");
+        return user;
+      }
+      // 503 = لا يوجد service role بعد — نكمل بالمسار القديم
+      if (resp.status !== 503) {
+        const body = (await resp.json().catch(() => ({}))) as { error?: string; message?: string };
+        throw new BackendError("unknown", body.message || body.error || "تعذّر إنشاء الحساب");
+      }
+    } catch (err) {
+      if (err instanceof BackendError) throw err;
+      // تجاهل أخطاء الشبكة على الـ API وجرّب المسار المحلي لـ Auth
+    }
+
+    // مسار احتياطي (بدون service role): signup ثم sign-in
     const { data, error } = await db.auth.signUp({
       email: authEmail,
       password,
@@ -93,72 +173,50 @@ export const supabaseBackend: Backend = {
         msg.includes("already") ||
         msg.includes("registered") ||
         msg.includes("exists");
+      if (!recoverable) throw mapAuthError(error?.message ?? "تعذّر إنشاء الحساب");
 
-      if (!recoverable) {
-        throw new BackendError("unknown", error?.message ?? "تعذّر إنشاء الحساب");
-      }
-
-      const { data: inData, error: inErr } = await db.auth.signInWithPassword({
-        email: authEmail,
-        password,
-      });
-      if (inErr || !inData.user) {
-        if (msg.includes("rate limit")) {
-          throw new BackendError(
-            "unknown",
-            "تم تجاوز حد التسجيل مؤقتًا. انتظر دقيقة ثم أعد المحاولة، أو استخدم تبويب تسجيل الدخول إذا كان الحساب قد أُنشئ."
-          );
+      // محاولة دخول بكل الصيغ المحتملة
+      let signedInId: string | null = null;
+      let lastErr = error?.message ?? "";
+      for (const email of authEmailCandidates(identifierType, identifier)) {
+        const { data: inData, error: inErr } = await db.auth.signInWithPassword({
+          email,
+          password,
+        });
+        if (!inErr && inData.user) {
+          signedInId = inData.user.id;
+          break;
         }
-        throw new BackendError("unknown", error?.message ?? "تعذّر إنشاء الحساب");
+        if (inErr) lastErr = inErr.message;
       }
-      userId = inData.user.id;
-    } else {
-      userId = data.user.id;
-      // إن كانت جلسة التأكيد غير مفعّلة قد لا تُعاد session بعد signup
-      if (!data.session) {
-        await db.auth.signInWithPassword({ email: authEmail, password });
-      }
+      if (!signedInId) throw mapAuthError(lastErr);
+      return ensureProfile(db, signedInId, identifierType, identifier, profile);
     }
 
-    if (!userId) throw new BackendError("unknown", "تعذّر إنشاء الحساب");
+    if (!data.session) {
+      const { error: inErr } = await db.auth.signInWithPassword({ email: authEmail, password });
+      if (inErr) throw mapAuthError(inErr.message);
+    }
 
-    const isDesignatedOwner = OWNER_IDENTIFIER ? identifier === OWNER_IDENTIFIER : false;
-
-    const { error: upsertError } = await db.from("profiles").upsert(
-      {
-        id: userId,
-        identifier_type: identifierType,
-        identifier,
-        status: isDesignatedOwner ? "approved" : "pending",
-        is_owner: isDesignatedOwner,
-        full_name: profile?.fullName || null,
-        city: profile?.city || null,
-        package_name: isDesignatedOwner ? "مالك التطبيق" : null,
-        last_seen_at: new Date().toISOString(),
-      },
-      { onConflict: "id" }
-    );
-    if (upsertError) throw new BackendError("unknown", upsertError.message);
-
-    const user = await this.getCurrentUser();
-    if (!user) throw new BackendError("unknown", "تعذّر تحميل بيانات الحساب بعد إنشائه");
-    return user;
+    return ensureProfile(db, data.user.id, identifierType, identifier, profile);
   },
 
   async signIn(identifierType, identifier, password) {
     const db = requireClient();
-    const authEmail = toAuthEmail(identifierType, identifier);
+    let lastErr = "البريد/الجوال أو كلمة المرور غير صحيحة";
 
-    const { error } = await db.auth.signInWithPassword({ email: authEmail, password });
-    if (error) {
-      throw new BackendError(
-        error.message.toLowerCase().includes("invalid") ? "bad_password" : "not_found",
-        "البريد/الجوال أو كلمة المرور غير صحيحة"
-      );
+    for (const email of authEmailCandidates(identifierType, identifier)) {
+      const { data, error } = await db.auth.signInWithPassword({ email, password });
+      if (!error && data.user) {
+        // إن وُجدت جلسة بدون صف في profiles نُنشئه الآن (حالات signup الناقصة)
+        const existing = await this.getCurrentUser();
+        if (existing) return existing;
+        return ensureProfile(db, data.user.id, identifierType, identifier);
+      }
+      if (error) lastErr = error.message;
     }
-    const user = await this.getCurrentUser();
-    if (!user) throw new BackendError("unknown", "تعذّر تحميل بيانات الحساب");
-    return user;
+
+    throw mapAuthError(lastErr);
   },
 
   async signOut() {

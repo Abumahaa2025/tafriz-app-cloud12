@@ -1,0 +1,127 @@
+import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { createClient } from "@supabase/supabase-js";
+
+/**
+ * إنشاء حساب مؤكَّد مباشرة عبر service role حتى لا يعتمد التسجيل
+ * على إيميلات التأكيد (سبب email rate limit ورفض تسجيل الدخول).
+ *
+ * يتطلب في Vercel:
+ * - SUPABASE_URL أو VITE_SUPABASE_URL
+ * - SUPABASE_SERVICE_ROLE_KEY
+ */
+
+type IdentifierType = "email" | "phone";
+
+function toAuthEmail(type: IdentifierType, identifier: string): string {
+  if (type === "email") return identifier.trim().toLowerCase();
+  const digits = identifier.replace(/\D/g, "");
+  return `phone${digits}@users.tafriz.app`;
+}
+
+async function findUserIdByEmail(
+  url: string,
+  serviceKey: string,
+  email: string
+): Promise<string | null> {
+  const endpoint = `${url.replace(/\/$/, "")}/auth/v1/admin/users?email=${encodeURIComponent(email)}`;
+  const resp = await fetch(endpoint, {
+    headers: {
+      apikey: serviceKey,
+      Authorization: `Bearer ${serviceKey}`,
+    },
+  });
+  if (!resp.ok) return null;
+  const json = (await resp.json()) as { users?: { id: string; email?: string }[] };
+  const hit = (json.users ?? []).find((u) => (u.email || "").toLowerCase() === email.toLowerCase());
+  return hit?.id ?? null;
+}
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceKey) {
+    return res.status(503).json({
+      error: "missing_service_role",
+      message: "SUPABASE_SERVICE_ROLE_KEY غير مضبوط في Vercel",
+    });
+  }
+
+  const { identifierType, identifier, password, profile } = req.body ?? {};
+  if (
+    (identifierType !== "email" && identifierType !== "phone") ||
+    !identifier ||
+    typeof password !== "string" ||
+    password.length < 4
+  ) {
+    return res.status(400).json({ error: "invalid_payload" });
+  }
+
+  const admin = createClient(url, serviceKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  const authEmail = toAuthEmail(identifierType, identifier);
+  const ownerId = (process.env.OWNER_IDENTIFIER || "0575051487").trim();
+  const isOwner = String(identifier) === ownerId;
+
+  let userId = await findUserIdByEmail(url, serviceKey, authEmail);
+
+  if (userId) {
+    const { data, error } = await admin.auth.admin.updateUserById(userId, {
+      password,
+      email_confirm: true,
+    });
+    if (error || !data.user) {
+      return res.status(400).json({ error: error?.message || "update_failed" });
+    }
+    userId = data.user.id;
+  } else {
+    const { data, error } = await admin.auth.admin.createUser({
+      email: authEmail,
+      password,
+      email_confirm: true,
+      user_metadata: { identifierType, identifier },
+    });
+    if (error || !data.user) {
+      // سباق نادر: أُنشئ الحساب بين البحث والإنشاء
+      const again = await findUserIdByEmail(url, serviceKey, authEmail);
+      if (!again) {
+        return res.status(400).json({ error: error?.message || "create_failed" });
+      }
+      const upd = await admin.auth.admin.updateUserById(again, {
+        password,
+        email_confirm: true,
+      });
+      if (upd.error || !upd.data.user) {
+        return res.status(400).json({ error: upd.error?.message || "update_failed" });
+      }
+      userId = upd.data.user.id;
+    } else {
+      userId = data.user.id;
+    }
+  }
+
+  const { error: profileError } = await admin.from("profiles").upsert(
+    {
+      id: userId,
+      identifier_type: identifierType,
+      identifier,
+      status: isOwner ? "approved" : "pending",
+      is_owner: isOwner,
+      full_name: profile?.fullName || null,
+      city: profile?.city || null,
+      package_name: isOwner ? "مالك التطبيق" : null,
+      last_seen_at: new Date().toISOString(),
+    },
+    { onConflict: "id" }
+  );
+  if (profileError) {
+    return res.status(400).json({ error: profileError.message });
+  }
+
+  return res.status(200).json({ ok: true, email: authEmail, userId });
+}
