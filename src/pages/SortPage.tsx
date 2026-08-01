@@ -16,8 +16,14 @@ import { runSort, SortResult } from "@/lib/sort-logic";
 import { loadLocal, saveLocal } from "@/lib/storage";
 import { consumeSharedFile } from "@/lib/shared-file";
 import { listenForNativeSharedFile } from "@/lib/native-import";
+import { nativeShareText } from "@/lib/native-share";
 import { backend } from "@/lib/backend";
 import { useAuth } from "@/context/AuthContext";
+
+type NavShare = Navigator & {
+  canShare?: (data: { files?: File[]; text?: string; title?: string }) => boolean;
+  share?: (data: ShareData) => Promise<void>;
+};
 
 type SortMode = "full" | "new";
 type FileMeta = { name: string };
@@ -81,7 +87,9 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
 
   const [zoom, setZoom] = React.useState(100);
   const [result, setResult] = React.useState<SortResult | null>(initial.result);
+  const [actionNotice, setActionNotice] = React.useState<string | null>(null);
   const resultsRef = React.useRef<HTMLDivElement | null>(null);
+  const noticeTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // استقبال ملف شارَك المستخدم من تطبيق ثاني (مثل واتساب) عبر public/sw.js —
   // هذا وحده يحتاج useEffect لأنه يعتمد على رابط الصفحة (async)
@@ -185,10 +193,70 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
     }).catch(() => {});
   }
 
-  function handleCopyAll() {
-    if (!result) return;
-    const text = result.matchedRows.map((r) => r.plate).join("\n");
-    navigator.clipboard?.writeText(text).catch(() => {});
+  function flashNotice(msg: string) {
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    setActionNotice(msg);
+    noticeTimer.current = setTimeout(() => setActionNotice(null), 2000);
+  }
+
+  function buildResultsText() {
+    if (!result || result.matchedRows.length === 0) return "";
+    return result.matchedRows.map((r) => r.plate).join("\n");
+  }
+
+  async function handleShareResults() {
+    const text = buildResultsText();
+    if (!text) {
+      flashNotice("لا توجد نتائج لمشاركتها");
+      return;
+    }
+    const fileName = "نتائج-الفرز.txt";
+    const title = "نتائج الفرز";
+
+    const usedNativeShare = await nativeShareText(fileName, text, title);
+    if (usedNativeShare) return;
+
+    const file = new File([text], fileName, { type: "text/plain" });
+    const nav = navigator as NavShare;
+
+    if (nav.share) {
+      if (nav.canShare?.({ files: [file] })) {
+        try {
+          await nav.share({ files: [file], title, text });
+          return;
+        } catch (err) {
+          if (err instanceof Error && err.name === "AbortError") return;
+        }
+      }
+      try {
+        await nav.share({ title, text });
+        return;
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") return;
+      }
+    }
+
+    // احتياطي: نسخ النص إن لم تتوفر قائمة مشاركة
+    try {
+      await navigator.clipboard?.writeText(text);
+      flashNotice("تم نسخ النتائج — الصقها في أي تطبيق");
+    } catch {
+      flashNotice("تعذّرت المشاركة على هذا الجهاز");
+    }
+  }
+
+  async function handleCopyAll() {
+    const text = buildResultsText();
+    if (!text) {
+      flashNotice("لا توجد نتائج لنسخها");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      flashNotice("تم النسخ");
+    } catch {
+      flashNotice("تعذّر النسخ");
+    }
   }
 
   const canSort = !!dataSheet && !!referralSheet && !!plateColumn && !!streetColumn && !!referralPlateColumn;
@@ -397,17 +465,22 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
       </Card>
 
       {/* شريط الإجراءات السفلي */}
-      <div className="fixed inset-x-0 bottom-16 z-10 mx-auto flex max-w-md items-center gap-2 bg-background/95 px-4 py-3 backdrop-blur">
-        <Button variant="outline" size="icon">
-          <Share2 className="h-5 w-5" />
-        </Button>
-        <Button className="flex-1" disabled={!canSort} onClick={handleRunSort}>
-          <ListChecks className="h-5 w-5" />
-          {mode === "full" ? "فرز كلي" : "فرز جديد"}
-        </Button>
-        <Button variant="outline" size="icon" onClick={handleCopyAll}>
-          <Copy className="h-5 w-5" />
-        </Button>
+      <div className="fixed inset-x-0 bottom-16 z-10 mx-auto flex max-w-md flex-col gap-1 bg-background/95 px-4 py-3 backdrop-blur">
+        {actionNotice && (
+          <p className="text-center text-xs font-bold text-primary">{actionNotice}</p>
+        )}
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="icon" onClick={handleShareResults} aria-label="مشاركة النتائج">
+            <Share2 className="h-5 w-5" />
+          </Button>
+          <Button className="flex-1" disabled={!canSort} onClick={handleRunSort}>
+            <ListChecks className="h-5 w-5" />
+            {mode === "full" ? "فرز كلي" : "فرز جديد"}
+          </Button>
+          <Button variant="outline" size="icon" onClick={handleCopyAll} aria-label="نسخ النتائج">
+            <Copy className="h-5 w-5" />
+          </Button>
+        </div>
       </div>
     </div>
   );
