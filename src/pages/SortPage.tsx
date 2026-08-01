@@ -1,0 +1,462 @@
+import * as React from "react";
+import { BarChart3, FileText, Eraser, Share2, Copy, ListChecks, ChevronDown, ScanLine } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { FileDropCard } from "@/components/FileDropCard";
+import { SegmentedToggle } from "@/components/SegmentedToggle";
+import { SortSummaryCard } from "@/components/SortSummaryCard";
+import { PercentStepper } from "@/components/PercentStepper";
+import { StatPill } from "@/components/StatPill";
+import { ResultsTable } from "@/components/ResultsTable";
+import { ImportExportBar } from "@/components/ImportExportBar";
+import { AppMenu, MenuTarget } from "@/components/AppMenu";
+import { parseSpreadsheet, guessColumn, ParsedSheet } from "@/lib/xlsx-utils";
+import { runSort, SortResult } from "@/lib/sort-logic";
+import { loadLocal, saveLocal } from "@/lib/storage";
+import { consumeSharedFile } from "@/lib/shared-file";
+import { listenForNativeSharedFile } from "@/lib/native-import";
+import { backend } from "@/lib/backend";
+import { useAuth } from "@/context/AuthContext";
+
+type SortMode = "full" | "new";
+type FileMeta = { name: string };
+
+interface PersistedSortState {
+  dataFileMeta: FileMeta | null;
+  dataSheet: ParsedSheet | null;
+  referralFileMeta: FileMeta | null;
+  referralSheet: ParsedSheet | null;
+  plateColumn: string;
+  streetColumn: string;
+  referralPlateColumn: string;
+  result: SortResult | null;
+}
+
+const EMPTY_STATE: PersistedSortState = {
+  dataFileMeta: null,
+  dataSheet: null,
+  referralFileMeta: null,
+  referralSheet: null,
+  plateColumn: "",
+  streetColumn: "",
+  referralPlateColumn: "",
+  result: null,
+};
+
+// تُقرأ مرة واحدة بشكل متزامن (وليس داخل useEffect) حتى لا يحدث فيها سباق
+// مع عملية الحفظ — كانت هذه بالضبط سبب اختفاء البيانات بمجرد الانتقال لتبويب
+// آخر: كانت useEffect الحفظ تكتب فوق البيانات المحفوظة بقيم فارغة قبل ما
+// تكتمل استعادتها.
+function readPersistedState(): PersistedSortState {
+  return loadLocal<PersistedSortState>("last_sort_state", EMPTY_STATE);
+}
+
+interface SortPageProps {
+  onNavigate?: (target: MenuTarget | "ai-scan") => void;
+}
+
+export default function SortPage({ onNavigate }: SortPageProps = {}) {
+  const { user } = useAuth();
+  const [mode, setMode] = React.useState<SortMode>("full");
+  const [menuOpen, setMenuOpen] = React.useState(false);
+
+  const initial = React.useRef(readPersistedState()).current;
+
+  // data file state (fileMeta persists the file NAME across reloads even
+  // though the raw File object itself can't be stored in localStorage)
+  const [dataFile, setDataFile] = React.useState<File | FileMeta | null>(initial.dataFileMeta);
+  const [dataSheet, setDataSheet] = React.useState<ParsedSheet | null>(initial.dataSheet);
+  const [dataProgress, setDataProgress] = React.useState<number | null>(null);
+  const [dataPassword, setDataPassword] = React.useState("");
+  const [plateColumn, setPlateColumn] = React.useState<string>(initial.plateColumn);
+  const [streetColumn, setStreetColumn] = React.useState<string>(initial.streetColumn);
+
+  // referral file state
+  const [referralFile, setReferralFile] = React.useState<File | FileMeta | null>(initial.referralFileMeta);
+  const [referralSheet, setReferralSheet] = React.useState<ParsedSheet | null>(initial.referralSheet);
+  const [referralProgress, setReferralProgress] = React.useState<number | null>(null);
+  const [referralPassword, setReferralPassword] = React.useState("");
+  const [referralPlateColumn, setReferralPlateColumn] = React.useState<string>(initial.referralPlateColumn);
+
+  const [zoom, setZoom] = React.useState(100);
+  const [result, setResult] = React.useState<SortResult | null>(initial.result);
+
+  // استقبال ملف شارَك المستخدم من تطبيق ثاني (مثل واتساب) عبر public/sw.js —
+  // هذا وحده يحتاج useEffect لأنه يعتمد على رابط الصفحة (async)
+  React.useEffect(() => {
+    consumeSharedFile().then((file) => {
+      if (file) handleDataSelect(file);
+    });
+
+    // نفس الفكرة لكن للتطبيق الأصلي (Android) بعد تحويله عبر Capacitor —
+    // لا يفعل شيئًا على الويب العادي (راجع lib/native-import.ts)
+    const removeNativeListener = listenForNativeSharedFile(handleDataSelect);
+    return removeNativeListener;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // حفظ الحالة كل ما تغيّرت (بدون حفظ كائن File نفسه — غير قابل للتخزين)
+  React.useEffect(() => {
+    saveLocal("last_sort_state", {
+      dataFileMeta: dataFile ? { name: dataFile.name } : null,
+      dataSheet,
+      referralFileMeta: referralFile ? { name: referralFile.name } : null,
+      referralSheet,
+      plateColumn,
+      streetColumn,
+      referralPlateColumn,
+      result,
+    });
+  }, [dataFile, dataSheet, referralFile, referralSheet, plateColumn, streetColumn, referralPlateColumn, result]);
+
+  async function handleDataSelect(file: File) {
+    setDataFile(file);
+    setDataProgress(0);
+    const timer = fakeProgress(setDataProgress);
+    try {
+      const parsed = await parseSpreadsheet(file);
+      setDataSheet(parsed);
+      backend.saveUpload(file.name, parsed.headers, parsed.rows).catch(() => {});
+      const guessedPlate = guessColumn(parsed.headers, ["لوحة", "اللوحة", "Plate"]);
+      setPlateColumn(guessedPlate ?? "");
+      setStreetColumn(guessColumn(parsed.headers, ["شارع", "الشارع", "Street"], guessedPlate) ?? "");
+    } catch (err) {
+      await backend.logError(
+        err instanceof Error ? err.message : "تعذّر قراءة ملف الداتا",
+        `أثناء رفع الملف: ${file.name}`
+      );
+    } finally {
+      clearInterval(timer);
+      setDataProgress(100);
+    }
+  }
+
+  async function handleReferralSelect(file: File) {
+    setReferralFile(file);
+    setReferralProgress(0);
+    const timer = fakeProgress(setReferralProgress);
+    try {
+      const parsed = await parseSpreadsheet(file);
+      setReferralSheet(parsed);
+      backend.saveUpload(file.name, parsed.headers, parsed.rows).catch(() => {});
+      setReferralPlateColumn(guessColumn(parsed.headers, ["لوحة", "اللوحة", "Plate"]) ?? "");
+    } catch (err) {
+      await backend.logError(
+        err instanceof Error ? err.message : "تعذّر قراءة ملف الإحالة",
+        `أثناء رفع الملف: ${file.name}`
+      );
+    } finally {
+      clearInterval(timer);
+      setReferralProgress(100);
+    }
+  }
+
+  function handleClearAll() {
+    setDataFile(null);
+    setDataSheet(null);
+    setDataProgress(null);
+    setPlateColumn("");
+    setStreetColumn("");
+    setReferralFile(null);
+    setReferralSheet(null);
+    setReferralProgress(null);
+    setReferralPlateColumn("");
+    setResult(null);
+  }
+
+  function handleRunSort() {
+    if (!dataSheet || !referralSheet || !plateColumn || !streetColumn || !referralPlateColumn) {
+      return;
+    }
+    const res = runSort(dataSheet, plateColumn, streetColumn, referralSheet, referralPlateColumn);
+    setResult(res);
+    backend.saveSortHistoryEntry({
+      dataFileName: dataFile?.name ?? "الداتا",
+      referralFileName: referralFile?.name ?? "الإحالة",
+      unsortedCount: res.unsortedCount,
+      distinctMatchedPlates: res.distinctMatchedPlates,
+      matchedRows: res.matchedRows,
+    }).catch(() => {});
+  }
+
+  function handleCopyAll() {
+    if (!result) return;
+    const text = result.matchedRows.map((r) => r.plate).join("\n");
+    navigator.clipboard?.writeText(text).catch(() => {});
+  }
+
+  const canSort = !!dataSheet && !!referralSheet && !!plateColumn && !!streetColumn && !!referralPlateColumn;
+
+  // تنبيه بسيط للمالك بعدد طلبات الدخول الجديدة بانتظار موافقته
+  const [pendingRequests, setPendingRequests] = React.useState(0);
+  React.useEffect(() => {
+    if (!user?.isOwner) return;
+    const check = () => {
+      backend.listUsers().then((users) => {
+        setPendingRequests(users.filter((u) => u.status === "pending").length);
+      });
+    };
+    check();
+    const interval = setInterval(check, 20_000);
+    return () => clearInterval(interval);
+  }, [user?.isOwner]);
+
+  return (
+    <div className="mx-auto flex max-w-md flex-col gap-4 px-4 pb-28 pt-4">
+      <header className="flex items-center justify-between py-2">
+        <button className="text-muted-foreground">
+          <ListChecks className="h-6 w-6 opacity-0" />
+        </button>
+        <h1 className="text-xl font-black">الفرز</h1>
+        <button
+          onClick={() => setMenuOpen(true)}
+          className="relative flex h-9 w-9 items-center justify-center text-foreground"
+        >
+          <span className="sr-only">القائمة</span>
+          <div className="flex flex-col gap-1">
+            <span className="block h-0.5 w-5 bg-foreground" />
+            <span className="block h-0.5 w-5 bg-foreground" />
+            <span className="block h-0.5 w-5 bg-foreground" />
+          </div>
+          {user?.isOwner && pendingRequests > 0 && (
+            <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">
+              {pendingRequests}
+            </span>
+          )}
+        </button>
+      </header>
+
+      <AppMenu
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        onNavigate={(target) => onNavigate?.(target)}
+        isOwner={user?.isOwner}
+      />
+
+      <ImportExportBar
+        onImport={handleDataSelect}
+        buildExportText={() =>
+          (result?.matchedRows ?? [])
+            .map((r) => `${r.street} - ${r.plate}`)
+            .join("\n") || "لا توجد نتائج بعد"
+        }
+      />
+
+      <Button variant="outline" onClick={() => onNavigate?.("ai-scan")}>
+        <ScanLine className="h-4 w-4" />
+        التعرف الذكي على اللوحة بالكاميرا
+      </Button>
+
+      <SortSummaryCard
+        fileCount={(dataFile ? 1 : 0) + (referralFile ? 1 : 0)}
+        plateCount={result?.matchedRows.length ?? 0}
+        ready={canSort}
+      >
+        <p className="text-xs text-muted-foreground">
+          ارفع ملف الداتا وملف الإحالة أدناه، حدد أعمدة رقم اللوحة والشارع، ثم اضغط
+          «فرز كلي» لمطابقة اللوحات.
+        </p>
+      </SortSummaryCard>
+
+      {/* الداتا */}
+      <Card>
+        <CardHeader className="flex-row items-center justify-between space-y-0">
+          <BarChart3 className="h-5 w-5 text-primary" />
+          <CardTitle>الداتا</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <FileDropCard
+            label="الداتا"
+            file={dataFile}
+            progress={dataProgress}
+            onSelect={handleDataSelect}
+            onClear={() => {
+              setDataFile(null);
+              setDataSheet(null);
+              setDataProgress(null);
+            }}
+          />
+
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="secondary" className="shrink-0">
+              تأكيد
+            </Button>
+            <Input
+              type="text"
+              placeholder="كلمة المرور (إن وجدت)"
+              value={dataPassword}
+              onChange={(e) => setDataPassword(e.target.value)}
+              className="text-right"
+            />
+          </div>
+
+          {dataSheet && (
+            <>
+              <ColumnPicker
+                title="أعمدة الداتا"
+                headers={dataSheet.headers}
+                selections={[
+                  { label: "عمود رقم اللوحة", value: plateColumn, onChange: setPlateColumn },
+                  { label: "عمود الشارع", value: streetColumn, onChange: setStreetColumn },
+                ]}
+              />
+              {plateColumn && plateColumn === streetColumn && (
+                <p className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                  ⚠️ عمود رقم اللوحة وعمود الشارع محددين على نفس العمود — النتائج
+                  راح تكون غلط. افتح "أعمدة الداتا" أعلاه واختر عمودين مختلفين.
+                </p>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <SegmentedToggle
+        value={mode}
+        onChange={(v) => setMode(v as SortMode)}
+        options={[
+          { value: "full", label: "فرز كلي" },
+          { value: "new", label: "فرز جديد" },
+        ]}
+      />
+
+      {/* ملف الإحالة */}
+      <Card>
+        <CardHeader className="flex-row items-center justify-between space-y-0">
+          <FileText className="h-5 w-5 text-primary" />
+          <CardTitle>ملف الإحالة</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <FileDropCard
+            label="ملف الإحالة"
+            file={referralFile}
+            progress={referralProgress}
+            onSelect={handleReferralSelect}
+            onClear={() => {
+              setReferralFile(null);
+              setReferralSheet(null);
+              setReferralProgress(null);
+            }}
+          />
+
+          {referralSheet && (
+            <>
+              <p className="text-xs font-bold text-primary">
+                ✓ تم الكشف: رقم اللوحة
+              </p>
+              <ColumnPicker
+                title="عمود اللوحات في الإحالة"
+                headers={referralSheet.headers}
+                selections={[
+                  {
+                    label: "عمود رقم اللوحة",
+                    value: referralPlateColumn,
+                    onChange: setReferralPlateColumn,
+                  },
+                ]}
+              />
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* نتائج الفرز */}
+      <Card>
+        <CardHeader className="flex-row items-center justify-between space-y-0">
+          <PercentStepper value={zoom} onChange={setZoom} />
+          <CardTitle>نتائج الفرز</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3" style={{ fontSize: `${zoom}%` }}>
+          <div className="flex gap-2">
+            <StatPill label="غير مفرزة" value={result?.unsortedCount ?? 0} tone="rose" />
+            <StatPill label="فرز من الإحالة" value={result?.distinctMatchedPlates ?? 0} tone="red" />
+            <StatPill label="لوحات مفرزة" value={result?.matchedRows.length ?? 0} tone="green" />
+          </div>
+
+          <p className="text-sm font-bold">داتا برنامج {dataFile ? dataFile.name : "xlsx.5"}</p>
+
+          <ResultsTable rows={result?.matchedRows ?? []} />
+
+          <Button variant="destructive" onClick={handleClearAll} className="mt-1">
+            <Eraser className="h-4 w-4" />
+            مسح
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* شريط الإجراءات السفلي */}
+      <div className="fixed inset-x-0 bottom-16 z-10 mx-auto flex max-w-md items-center gap-2 bg-background/95 px-4 py-3 backdrop-blur">
+        <Button variant="outline" size="icon">
+          <Share2 className="h-5 w-5" />
+        </Button>
+        <Button className="flex-1" disabled={!canSort} onClick={handleRunSort}>
+          <ListChecks className="h-5 w-5" />
+          فرز جديد
+        </Button>
+        <Button variant="outline" size="icon" onClick={handleCopyAll}>
+          <Copy className="h-5 w-5" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ColumnPicker({
+  title,
+  headers,
+  selections,
+}: {
+  title: string;
+  headers: string[];
+  selections: { label: string; value: string; onChange: (v: string) => void }[];
+}) {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <div className="rounded-xl border border-border">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between px-4 py-3"
+      >
+        <span className="text-xs text-muted-foreground">
+          {selections.length}/{headers.length}
+        </span>
+        <span className="flex items-center gap-2 text-sm font-bold">
+          {title}
+          <ChevronDown className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`} />
+        </span>
+      </button>
+      {open && (
+        <div className="flex flex-col gap-3 border-t border-border px-4 py-3">
+          {selections.map((sel) => (
+            <label key={sel.label} className="flex flex-col gap-1 text-right">
+              <span className="text-xs text-muted-foreground">{sel.label}</span>
+              <select
+                value={sel.value}
+                onChange={(e) => sel.onChange(e.target.value)}
+                className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
+              >
+                {headers.map((h) => (
+                  <option key={h} value={h}>
+                    {h}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Simple simulated progress bar while the file parses (parsing itself is near-instant,
+// this just gives the same "يرفع..." upload feel as the reference app).
+function fakeProgress(setProgress: (v: number) => void) {
+  let value = 0;
+  return setInterval(() => {
+    value = Math.min(90, value + 15);
+    setProgress(value);
+  }, 120);
+}

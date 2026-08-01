@@ -1,0 +1,27 @@
+{
+  "name": "الفرز",
+  "short_name": "الفرز",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7fafa",
+  "theme_color": "#0d7d6f",
+  "dir": "rtl",
+  "lang": "ar",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ],
+  "share_target": {
+    "action": "/import",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "files": [
+        {
+          "name": "shared_file",
+          "accept": [".xlsx", ".xls", ".csv", "application/vnd.ms-excel"]
+        }
+      ]
+    }
+  }
+}
