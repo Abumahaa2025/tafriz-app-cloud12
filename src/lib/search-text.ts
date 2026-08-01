@@ -12,10 +12,18 @@ export function normalizeSearchText(raw: string): string {
   return out;
 }
 
+function plateLetterTokens(plateNorm: string): string[] {
+  return plateNorm
+    .split(" ")
+    .map((t) => t.trim())
+    .filter((t) => /^[\u0600-\u06FF]+$/.test(t));
+}
+
 /**
- * مطابقة دقيقة للبحث في التشييك/سجل الفرز:
- * - حرف عربي واحد: يظهر كرمز مستقل في اللوحة، أو ضمن الجزء الحرفي، أو في الشارع
- * - غير ذلك: تضمين عادي بعد التطبيع
+ * مطابقة بحث التشييك/سجل الفرز:
+ * - حرف عربي واحد: يطابق فقط حروف اللوحة (رمز مستقل أو داخل كتلة حروف اللوحة)
+ *   ولا يبحث في الشارع حتى لا تظهر لوحات د/ر بسبب كلمة في الشارع فيها «ج».
+ * - غير ذلك: يبحث في اللوحة والشارع بعد التطبيع.
  */
 export function matchesPlateStreet(plate: string, street: string, query: string): boolean {
   const q = normalizeSearchText(query);
@@ -25,15 +33,11 @@ export function matchesPlateStreet(plate: string, street: string, query: string)
 
   const isSingleArabicLetter = /^[\u0600-\u06FF]$/.test(q);
   if (isSingleArabicLetter) {
-    const tokens = p.split(" ").filter(Boolean);
-    if (tokens.some((t) => t === q)) return true;
-    // أجزاء حرفية بعد إزالة الأرقام: "1234 ا ب ج" أو "1234ابج"
-    const letterChunks = p
-      .replace(/[0-9]+/g, " ")
-      .split(" ")
-      .filter(Boolean);
-    if (letterChunks.some((chunk) => chunk === q || [...chunk].includes(q))) return true;
-    return [...s].includes(q) || s.split(" ").includes(q);
+    const letters = plateLetterTokens(p);
+    if (letters.some((t) => t === q)) return true;
+    // لوحات ملتصقة مثل "ابج" بدون مسافات
+    if (letters.some((t) => t.length > 1 && [...t].includes(q))) return true;
+    return false;
   }
 
   return p.includes(q) || s.includes(q);

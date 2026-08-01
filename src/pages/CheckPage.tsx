@@ -75,7 +75,7 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
       <div className="relative">
         <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
-          placeholder="ابحث بأي حرف أو رقم — يبحث بعناصر التشييك وبيانات الفرز معًا..."
+          placeholder="ابحث بحرف اللوحة أو رقمها — مثال: ج أو 5227..."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           className="pr-10 text-right"
