@@ -98,6 +98,34 @@ function requireClient() {
   return supabase;
 }
 
+async function accessToken(): Promise<string> {
+  const db = requireClient();
+  const { data, error } = await db.auth.getSession();
+  const token = data.session?.access_token;
+  if (error || !token) throw new BackendError("not_allowed", "سجّل الدخول أولًا");
+  return token;
+}
+
+async function callAccessControl<T = { ok: boolean }>(
+  action: string,
+  body: Record<string, unknown>
+): Promise<T> {
+  const token = await accessToken();
+  const resp = await fetch("/api/access-control", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ action, ...body }),
+  });
+  const json = (await resp.json().catch(() => ({}))) as T & { error?: string };
+  if (!resp.ok) {
+    throw new BackendError("unknown", json.error || `access_control_${resp.status}`);
+  }
+  return json;
+}
+
 interface ProfileRow {
   id: string;
   identifier_type: IdentifierType;
@@ -249,18 +277,11 @@ export const supabaseBackend: Backend = {
   },
 
   async approveUser(id, packageName, days) {
-    const expires = new Date();
-    expires.setDate(expires.getDate() + days);
-    const { error } = await requireClient()
-      .from("profiles")
-      .update({ status: "approved", package_name: packageName, package_expires_at: expires.toISOString() })
-      .eq("id", id);
-    if (error) throw new BackendError("unknown", error.message);
+    await callAccessControl("approve", { userId: id, packageName, days });
   },
 
   async revokeUser(id) {
-    const { error } = await requireClient().from("profiles").update({ status: "revoked" }).eq("id", id);
-    if (error) throw new BackendError("unknown", error.message);
+    await callAccessControl("revoke", { userId: id });
   },
 
   async submitFeedback(identifier, message) {
@@ -341,10 +362,8 @@ export const supabaseBackend: Backend = {
   },
 
   async generateActivationCode() {
-    const code = "TFZ-" + Math.floor(1000 + Math.random() * 9000);
-    const { error } = await requireClient().from("activation_codes").insert({ code });
-    if (error) throw new BackendError("unknown", error.message);
-    return code;
+    const result = await callAccessControl<{ code: string }>("generateCode", {});
+    return result.code;
   },
 
   async listActivationCodes() {
@@ -361,27 +380,12 @@ export const supabaseBackend: Backend = {
   },
 
   async redeemActivationCode(code) {
-    const db = requireClient();
-    const { data: sessionData } = await db.auth.getSession();
-    const uid = sessionData.session?.user.id;
-    if (!uid) return false;
-
-    const cleanCode = code.trim();
-    const { data, error } = await db
-      .from("activation_codes")
-      .update({ used_by: uid })
-      .eq("code", cleanCode)
-      .is("used_by", null)
-      .select();
-    if (error || !data || data.length === 0) return false;
-
-    const expires = new Date();
-    expires.setDate(expires.getDate() + 30);
-    await db
-      .from("profiles")
-      .update({ status: "approved", package_name: "مفعّل برمز تفعيل", package_expires_at: expires.toISOString() })
-      .eq("id", uid);
-    return true;
+    try {
+      await callAccessControl("redeemCode", { code });
+      return true;
+    } catch {
+      return false;
+    }
   },
 
   async saveUpload(fileName, headers, rows) {

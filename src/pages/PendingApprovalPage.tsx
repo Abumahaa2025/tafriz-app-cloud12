@@ -16,6 +16,18 @@ export default function PendingApprovalPage() {
   const [code, setCode] = React.useState("");
   const [codeError, setCodeError] = React.useState<string | null>(null);
   const [showCodeBox, setShowCodeBox] = React.useState(false);
+  const [redeemBusy, setRedeemBusy] = React.useState(false);
+
+  // بعد موافقة المالك يتحدّث الوضع تلقائيًا بدون إعادة تثبيت
+  React.useEffect(() => {
+    if (revoked) return;
+    const tick = () => {
+      refresh().catch(() => {});
+    };
+    tick();
+    const interval = setInterval(tick, 4000);
+    return () => clearInterval(interval);
+  }, [refresh, revoked]);
 
   function requestMessage() {
     if (!user) return "";
@@ -53,11 +65,16 @@ export default function PendingApprovalPage() {
       setCodeError("يرجى إدخال رمز التفعيل");
       return;
     }
-    const success = await backend.redeemActivationCode(code.trim());
-    if (success) {
-      await refresh();
-    } else {
-      setCodeError("رمز التفعيل غير صحيح أو مستخدم من قبل");
+    setRedeemBusy(true);
+    try {
+      const success = await backend.redeemActivationCode(code.trim());
+      if (success) {
+        await refresh();
+      } else {
+        setCodeError("رمز التفعيل غير صحيح أو مستخدم من قبل");
+      }
+    } finally {
+      setRedeemBusy(false);
     }
   }
 
@@ -135,8 +152,16 @@ export default function PendingApprovalPage() {
             dir="ltr"
           />
           {codeError && <p className="text-xs text-destructive">{codeError}</p>}
-          <Button onClick={handleRedeemCode}>تأكيد الرمز والتفعيل</Button>
+          <Button onClick={handleRedeemCode} disabled={redeemBusy}>
+            {redeemBusy ? "جاري التفعيل..." : "تأكيد الرمز والتفعيل"}
+          </Button>
         </div>
+      )}
+
+      {!revoked && (
+        <Button variant="outline" onClick={() => refresh()} className="w-full">
+          تحديث حالة الطلب
+        </Button>
       )}
 
       <Button variant="ghost" onClick={signOut} className="text-muted-foreground">
