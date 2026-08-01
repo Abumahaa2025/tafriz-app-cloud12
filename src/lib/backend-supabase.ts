@@ -20,9 +20,12 @@ import {
 // نفس الرقم فقط لأغراض المصادقة الداخلية، ونخزّن الرقم الحقيقي في العمود
 // identifier بجدول profiles ونعرضه دائمًا للمستخدم، لا البريد الوهمي أبدًا.
 function toAuthEmail(type: IdentifierType, identifier: string): string {
-  if (type === "email") return identifier;
+  if (type === "email") return identifier.trim().toLowerCase();
   const digits = identifier.replace(/\D/g, "");
-  return `${digits}@phone.tafriz.app`;
+  // Supabase Auth يرفض بعض العناوين ذات الجزء المحلي الرقمي فقط
+  // (مثل 0575...@...) — نضيف بادئة ثابتة ليبقى البريد صالحًا شكليًا.
+  // الرقم الحقيقي يبقى في profiles.identifier ويُعرض للمستخدم كما هو.
+  return `phone${digits}@users.tafriz.app`;
 }
 
 // حد أمان لحجم كل رفعة (حتى مع Postgres الحقيقي، إرسال مئات الآلاف من
