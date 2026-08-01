@@ -13,6 +13,11 @@ import {
   SortHistorySearchHit,
 } from "./backend-types";
 import { OWNER_IDENTIFIER } from "./owner-config";
+import {
+  createSignedActivationCode,
+  normalizeActivationCodeInput,
+  verifySignedActivationCode,
+} from "./activation-code";
 
 // ملاحظة أمان: كلمة المرور هنا تُخزَّن كنص عادي محليًا على جهازك فقط، لأن
 // هذا الوضع "محلي للتجربة" وليس متصلًا بالإنترنت. بمجرد ما تضيف مفاتيح
@@ -27,6 +32,7 @@ const FEEDBACK_KEY = "feedback";
 const BROADCASTS_KEY = "broadcasts";
 const ERRORS_KEY = "error_reports";
 const ACTIVATION_CODES_KEY = "activation_codes";
+const REDEEMED_CODES_KEY = "redeemed_activation_codes";
 const UPLOADS_KEY = "uploaded_sheets";
 const SORT_HISTORY_KEY = "sort_history";
 const MAX_UPLOAD_ENTRIES = 15;
@@ -197,8 +203,9 @@ export const localBackend: Backend = {
   },
 
   async generateActivationCode() {
+    // رمز موقّع يتحقق منه جهاز المستخدم بدون مشاركة localStorage بين الجهازين
     const codes = loadLocal<ActivationCode[]>(ACTIVATION_CODES_KEY, []);
-    const code = "TFZ-" + Math.floor(1000 + Math.random() * 9000);
+    const code = createSignedActivationCode();
     codes.push({ code, createdAt: new Date().toISOString(), usedBy: null });
     saveLocal(ACTIVATION_CODES_KEY, codes);
     return code;
@@ -209,13 +216,19 @@ export const localBackend: Backend = {
   },
 
   async redeemActivationCode(code) {
-    const cleanCode = code.trim();
-    const codes = loadLocal<ActivationCode[]>(ACTIVATION_CODES_KEY, []);
-    const match = codes.find((c) => c.code === cleanCode && !c.usedBy);
-    if (!match) return false;
-
+    const cleanCode = normalizeActivationCodeInput(code);
     const sessionId = loadLocal<string | null>(SESSION_KEY, null);
     if (!sessionId) return false;
+
+    const redeemed = loadLocal<string[]>(REDEEMED_CODES_KEY, []);
+    if (redeemed.includes(cleanCode)) return false;
+
+    // 1) الرموز الموقّعة الجديدة تعمل عبر الأجهزة
+    // 2) الرموز القديمة المخزّنة على نفس الجهاز تبقى مدعومة للتوافق
+    const localCodes = loadLocal<ActivationCode[]>(ACTIVATION_CODES_KEY, []);
+    const localMatch = localCodes.find((c) => c.code === cleanCode && !c.usedBy);
+    const signedOk = verifySignedActivationCode(cleanCode);
+    if (!localMatch && !signedOk) return false;
 
     const users = readUsers();
     const expires = new Date();
@@ -227,10 +240,14 @@ export const localBackend: Backend = {
           : u
       )
     );
-    saveLocal(
-      ACTIVATION_CODES_KEY,
-      codes.map((c) => (c.code === cleanCode ? { ...c, usedBy: sessionId } : c))
-    );
+
+    if (localMatch) {
+      saveLocal(
+        ACTIVATION_CODES_KEY,
+        localCodes.map((c) => (c.code === cleanCode ? { ...c, usedBy: sessionId } : c))
+      );
+    }
+    saveLocal(REDEEMED_CODES_KEY, [...redeemed, cleanCode]);
     return true;
   },
 
