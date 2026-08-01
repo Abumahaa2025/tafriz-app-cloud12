@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Download, Upload, MessageCircle } from "lucide-react";
+import { Download, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { nativeShareText } from "@/lib/native-share";
 
@@ -78,17 +78,6 @@ export function ImportExportBar({
     flashStatus("متصفحك لا يدعم قائمة المشاركة، تم تنزيل الملف بدل ذلك");
   }
 
-  /**
-   * هذا هو الزر اللي يطابق الفيديو اللي أرسلته بالضبط: يفتح واتساب نفسه
-   * مباشرة (رابط wa.me الرسمي من واتساب) بدل ما يفتح قائمة مشاركة عامة فيها
-   * عدة تطبيقات. يشتغل على الجوال (يفتح تطبيق واتساب المثبَّت) وعلى الكمبيوتر
-   * (يفتح واتساب ويب) بنفس الرابط.
-   */
-  function handleOpenWhatsApp() {
-    const text = buildExportText();
-    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
-  }
-
   async function handleImport() {
     const win = window as FilePickerWindow;
 
@@ -143,13 +132,6 @@ export function ImportExportBar({
           تصدير
         </Button>
       </div>
-      <Button
-        className="w-full bg-[#25D366] text-white hover:bg-[#25D366]/90"
-        onClick={handleOpenWhatsApp}
-      >
-        <MessageCircle className="h-4 w-4" />
-        فتح واتساب مباشرة
-      </Button>
       {status && <p className="text-center text-[11px] text-muted-foreground">{status}</p>}
       <p className="text-center text-[11px] leading-5 text-muted-foreground">
         لاستيراد ملف من واتساب مباشرة: ثبّت التطبيق على شاشتك الرئيسية، وبعدها
