@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.tafriz.app",
+      "sha256_cert_fingerprints": [
+        "18:F8:26:63:41:9A:62:1B:7E:97:13:51:3D:B9:60:EF:33:A6:C3:B9:F1:04:EB:34:1D:3F:C5:84:8D:28:BC:37"
+      ]
+    }
+  }
+]

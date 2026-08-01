@@ -81,6 +81,7 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
 
   const [zoom, setZoom] = React.useState(100);
   const [result, setResult] = React.useState<SortResult | null>(initial.result);
+  const resultsRef = React.useRef<HTMLDivElement | null>(null);
 
   // استقبال ملف شارَك المستخدم من تطبيق ثاني (مثل واتساب) عبر public/sw.js —
   // هذا وحده يحتاج useEffect لأنه يعتمد على رابط الصفحة (async)
@@ -171,6 +172,10 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
     }
     const res = runSort(dataSheet, plateColumn, streetColumn, referralSheet, referralPlateColumn);
     setResult(res);
+    // إظهار النتائج فورًا بعد الفرز (خصوصًا داخل تطبيق أندرويد حيث الشريط السفلي يغطي الجدول)
+    requestAnimationFrame(() => {
+      resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
     backend.saveSortHistoryEntry({
       dataFileName: dataFile?.name ?? "الداتا",
       referralFileName: referralFile?.name ?? "الإحالة",
@@ -362,12 +367,12 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
       </Card>
 
       {/* نتائج الفرز */}
-      <Card>
+      <Card ref={resultsRef}>
         <CardHeader className="flex-row items-center justify-between space-y-0">
-          <PercentStepper value={zoom} onChange={setZoom} />
+          <PercentStepper value={zoom} onChange={(v) => setZoom(Math.max(50, Math.min(100, v)))} />
           <CardTitle>نتائج الفرز</CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-col gap-3" style={{ fontSize: `${zoom}%` }}>
+        <CardContent className="flex flex-col gap-3" style={{ fontSize: `${Math.max(50, zoom)}%` }}>
           <div className="flex gap-2">
             <StatPill label="غير مفرزة" value={result?.unsortedCount ?? 0} tone="rose" />
             <StatPill label="فرز من الإحالة" value={result?.distinctMatchedPlates ?? 0} tone="red" />
@@ -377,6 +382,12 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
           <p className="text-sm font-bold">داتا برنامج {dataFile ? dataFile.name : "xlsx.5"}</p>
 
           <ResultsTable rows={result?.matchedRows ?? []} />
+
+          {result && (
+            <p className="text-center text-xs text-muted-foreground">
+              تم عرض {result.matchedRows.length} نتيجة فرز
+            </p>
+          )}
 
           <Button variant="destructive" onClick={handleClearAll} className="mt-1">
             <Eraser className="h-4 w-4" />
@@ -392,7 +403,7 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
         </Button>
         <Button className="flex-1" disabled={!canSort} onClick={handleRunSort}>
           <ListChecks className="h-5 w-5" />
-          فرز جديد
+          {mode === "full" ? "فرز كلي" : "فرز جديد"}
         </Button>
         <Button variant="outline" size="icon" onClick={handleCopyAll}>
           <Copy className="h-5 w-5" />

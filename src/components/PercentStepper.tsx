@@ -12,7 +12,7 @@ export function PercentStepper({ value, onChange, step = 10 }: PercentStepperPro
     <div className="flex items-center gap-1 rounded-full border border-border bg-background p-1">
       <button
         type="button"
-        onClick={() => onChange(Math.max(0, value - step))}
+        onClick={() => onChange(Math.max(50, value - step))}
         className="flex h-8 w-8 items-center justify-center rounded-full text-primary hover:bg-secondary"
         aria-label="تقليل"
       >
