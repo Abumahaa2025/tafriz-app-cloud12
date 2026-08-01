@@ -46,6 +46,16 @@ function readUsers(): LocalUserRecord[] {
 function writeUsers(users: LocalUserRecord[]) {
   saveLocal(USERS_KEY, users);
 }
+function normalizeLocalFeedback(items: FeedbackItem[]): FeedbackItem[] {
+  return items.map((i) => ({
+    ...i,
+    threadId: i.threadId || i.id,
+    fromOwner: Boolean(i.fromOwner),
+    readByUser: i.readByUser === undefined ? true : Boolean(i.readByUser),
+    userId: i.userId ?? null,
+  }));
+}
+
 function strip(u: LocalUserRecord): AppUser {
   const { password: _password, ...rest } = u;
   return rest;
@@ -136,27 +146,71 @@ export const localBackend: Backend = {
     writeUsers(users.map((u) => (u.id === id ? { ...u, status: "revoked" } : u)));
   },
 
-  async submitFeedback(identifier, message) {
-    const items = loadLocal<FeedbackItem[]>(FEEDBACK_KEY, []);
+  async submitFeedback(identifier, message, threadId) {
+    const items = normalizeLocalFeedback(loadLocal<FeedbackItem[]>(FEEDBACK_KEY, []));
+    const id = crypto.randomUUID();
     items.push({
-      id: crypto.randomUUID(),
+      id,
       identifier,
       message,
       createdAt: new Date().toISOString(),
       read: false,
+      threadId: threadId || id,
+      fromOwner: false,
+      readByUser: true,
+      userId: loadLocal<string | null>(SESSION_KEY, null),
     });
     saveLocal(FEEDBACK_KEY, items);
   },
 
+  async replyToFeedback(threadId, message) {
+    const items = normalizeLocalFeedback(loadLocal<FeedbackItem[]>(FEEDBACK_KEY, []));
+    const root = items.find((i) => i.threadId === threadId);
+    if (!root) throw new BackendError("not_found", "المحادثة غير موجودة");
+    const next = items.map((i) =>
+      i.threadId === threadId && !i.fromOwner ? { ...i, read: true } : i
+    );
+    next.push({
+      id: crypto.randomUUID(),
+      identifier: root.identifier,
+      message,
+      createdAt: new Date().toISOString(),
+      read: true,
+      threadId,
+      fromOwner: true,
+      readByUser: false,
+      userId: root.userId ?? null,
+    });
+    saveLocal(FEEDBACK_KEY, next);
+  },
+
   async listFeedback() {
-    return loadLocal<FeedbackItem[]>(FEEDBACK_KEY, []).reverse();
+    return normalizeLocalFeedback(loadLocal<FeedbackItem[]>(FEEDBACK_KEY, [])).reverse();
+  },
+
+  async listMyFeedback() {
+    const uid = loadLocal<string | null>(SESSION_KEY, null);
+    const identifier = uid ? readUsers().find((u) => u.id === uid)?.identifier : null;
+    return normalizeLocalFeedback(loadLocal<FeedbackItem[]>(FEEDBACK_KEY, []))
+      .filter((i) => (uid && i.userId === uid) || (identifier && i.identifier === identifier))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   },
 
   async markFeedbackRead(id) {
-    const items = loadLocal<FeedbackItem[]>(FEEDBACK_KEY, []);
+    const items = normalizeLocalFeedback(loadLocal<FeedbackItem[]>(FEEDBACK_KEY, []));
     saveLocal(
       FEEDBACK_KEY,
       items.map((i) => (i.id === id ? { ...i, read: true } : i))
+    );
+  },
+
+  async markFeedbackThreadReadByUser(threadId) {
+    const items = normalizeLocalFeedback(loadLocal<FeedbackItem[]>(FEEDBACK_KEY, []));
+    saveLocal(
+      FEEDBACK_KEY,
+      items.map((i) =>
+        i.threadId === threadId && i.fromOwner ? { ...i, readByUser: true } : i
+      )
     );
   },
 

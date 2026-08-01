@@ -157,6 +157,21 @@ function rowToUser(row: ProfileRow): AppUser {
   };
 }
 
+function mapFeedbackRow(r: Record<string, unknown>): FeedbackItem {
+  const id = String(r.id ?? "");
+  return {
+    id,
+    identifier: String(r.identifier ?? ""),
+    message: String(r.message ?? ""),
+    createdAt: String(r.created_at ?? ""),
+    read: Boolean(r.read),
+    threadId: String(r.thread_id ?? id),
+    fromOwner: Boolean(r.from_owner),
+    readByUser: r.read_by_user === undefined ? true : Boolean(r.read_by_user),
+    userId: (r.user_id as string | null | undefined) ?? null,
+  };
+}
+
 export const supabaseBackend: Backend = {
   name: "supabase",
 
@@ -285,12 +300,54 @@ export const supabaseBackend: Backend = {
     await callAccessControl("revoke", { userId: id });
   },
 
-  async submitFeedback(identifier, message) {
+  async submitFeedback(identifier, message, threadId) {
     const db = requireClient();
     const { data: sessionData } = await db.auth.getSession();
     const uid = sessionData.session?.user.id;
-    const { error } = await db.from("feedback").insert({ user_id: uid, identifier, message });
+    const id = crypto.randomUUID();
+    const { error } = await db.from("feedback").insert({
+      id,
+      user_id: uid,
+      identifier,
+      message,
+      thread_id: threadId || id,
+      from_owner: false,
+      read: false,
+      read_by_user: true,
+    });
     if (error) throw new BackendError("unknown", error.message);
+  },
+
+  async replyToFeedback(threadId, message) {
+    const db = requireClient();
+    const { data: root, error: rootErr } = await db
+      .from("feedback")
+      .select("user_id, identifier, thread_id")
+      .eq("thread_id", threadId)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (rootErr) throw new BackendError("unknown", rootErr.message);
+    if (!root) throw new BackendError("not_found", "المحادثة غير موجودة");
+
+    const { error } = await db.from("feedback").insert({
+      id: crypto.randomUUID(),
+      user_id: root.user_id,
+      identifier: root.identifier,
+      message,
+      thread_id: threadId,
+      from_owner: true,
+      read: true,
+      read_by_user: false,
+    });
+    if (error) throw new BackendError("unknown", error.message);
+
+    // علّم رسائل المستخدم في الخيط كمقروءة بعد رد المالك
+    await db
+      .from("feedback")
+      .update({ read: true })
+      .eq("thread_id", threadId)
+      .eq("from_owner", false);
   },
 
   async listFeedback() {
@@ -299,17 +356,34 @@ export const supabaseBackend: Backend = {
       .select("*")
       .order("created_at", { ascending: false });
     if (error) throw new BackendError("unknown", error.message);
-    return (data ?? []).map((r) => ({
-      id: r.id,
-      identifier: r.identifier,
-      message: r.message,
-      createdAt: r.created_at,
-      read: r.read,
-    })) as FeedbackItem[];
+    return (data ?? []).map(mapFeedbackRow);
+  },
+
+  async listMyFeedback() {
+    const db = requireClient();
+    const { data: sessionData } = await db.auth.getSession();
+    const uid = sessionData.session?.user.id;
+    if (!uid) return [];
+    const { data, error } = await db
+      .from("feedback")
+      .select("*")
+      .eq("user_id", uid)
+      .order("created_at", { ascending: true });
+    if (error) throw new BackendError("unknown", error.message);
+    return (data ?? []).map(mapFeedbackRow);
   },
 
   async markFeedbackRead(id) {
     const { error } = await requireClient().from("feedback").update({ read: true }).eq("id", id);
+    if (error) throw new BackendError("unknown", error.message);
+  },
+
+  async markFeedbackThreadReadByUser(threadId) {
+    const { error } = await requireClient()
+      .from("feedback")
+      .update({ read_by_user: true })
+      .eq("thread_id", threadId)
+      .eq("from_owner", true);
     if (error) throw new BackendError("unknown", error.message);
   },
 

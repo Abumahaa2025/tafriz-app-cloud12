@@ -61,7 +61,15 @@ export interface FeedbackItem {
   identifier: string;
   message: string;
   createdAt: string;
+  /** مقروءة من طرف المالك (لرسائل المستخدم) */
   read: boolean;
+  /** معرّف خيط المحادثة — يساوي id أول رسالة عادة */
+  threadId: string;
+  /** true إذا كانت الرسالة من المالك للمستخدم */
+  fromOwner: boolean;
+  /** مقروءة من طرف المستخدم (لردود المالك) */
+  readByUser: boolean;
+  userId?: string | null;
 }
 
 export interface BroadcastItem {
@@ -102,9 +110,17 @@ export interface Backend {
   listUsers(): Promise<AppUser[]>;
   approveUser(id: string, packageName: string, days: number): Promise<void>;
   revokeUser(id: string): Promise<void>;
-  submitFeedback(identifier: string, message: string): Promise<void>;
+  /** رسالة جديدة أو رد داخل خيط موجود (من المستخدم) */
+  submitFeedback(identifier: string, message: string, threadId?: string): Promise<void>;
+  /** رد المالك داخل خيط محادثة */
+  replyToFeedback(threadId: string, message: string): Promise<void>;
   listFeedback(): Promise<FeedbackItem[]>;
+  /** رسائل المستخدم الحالي فقط (لعرض محادثته مع الإدارة) */
+  listMyFeedback(): Promise<FeedbackItem[]>;
   markFeedbackRead(id: string): Promise<void>;
+  /** المستخدم يعلّم ردود المالك في الخيط كمقروءة */
+  markFeedbackThreadReadByUser(threadId: string): Promise<void>;
+
   sendBroadcast(message: string): Promise<void>;
   listBroadcasts(): Promise<BroadcastItem[]>;
   logError(message: string, context?: string): Promise<void>;

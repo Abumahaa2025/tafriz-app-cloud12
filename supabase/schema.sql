@@ -36,7 +36,7 @@ as $$
 $$;
 
 -- --------------------------------------------------------------------------
--- 3) الملاحظات (feedback)
+-- 3) الملاحظات / محادثة الإدارة (feedback)
 -- --------------------------------------------------------------------------
 create table public.feedback (
   id uuid primary key default gen_random_uuid(),
@@ -44,7 +44,11 @@ create table public.feedback (
   identifier text not null,
   message text not null,
   created_at timestamptz not null default now(),
-  read boolean not null default false
+  read boolean not null default false,
+  -- محادثة: كل الرسائل في نفس الخيط تشارك thread_id (عادةً = id أول رسالة)
+  thread_id uuid,
+  from_owner boolean not null default false,
+  read_by_user boolean not null default true
 );
 
 -- --------------------------------------------------------------------------
@@ -125,15 +129,15 @@ create policy "insert own profile on signup" on public.profiles
 create policy "update own profile or owner updates any" on public.profiles
   for update using (auth.uid() = id or public.is_owner());
 
--- ---- feedback ----
-create policy "insert own feedback" on public.feedback
-  for insert with check (auth.uid() = user_id);
+-- ---- feedback (محادثة بين المستخدم والمالك) ----
+create policy "insert own feedback or owner reply" on public.feedback
+  for insert with check (auth.uid() = user_id or public.is_owner());
 
-create policy "owner reads all feedback" on public.feedback
-  for select using (public.is_owner());
+create policy "read own feedback or owner reads all" on public.feedback
+  for select using (auth.uid() = user_id or public.is_owner());
 
-create policy "owner updates feedback" on public.feedback
-  for update using (public.is_owner());
+create policy "update own feedback or owner updates" on public.feedback
+  for update using (auth.uid() = user_id or public.is_owner());
 
 -- ---- broadcasts ----
 create policy "any approved user reads broadcasts" on public.broadcasts

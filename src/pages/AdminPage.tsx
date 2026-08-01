@@ -36,6 +36,8 @@ export default function AdminPage({ onBack }: { onBack?: () => void }) {
   const [codes, setCodes] = React.useState<ActivationCode[]>([]);
   const [broadcastText, setBroadcastText] = React.useState("");
   const [phones, setPhones] = React.useState<SupportPhone[]>(getSupportPhones());
+  const [replyDrafts, setReplyDrafts] = React.useState<Record<string, string>>({});
+  const [openThreadId, setOpenThreadId] = React.useState<string | null>(null);
 
   const refresh = React.useCallback(async () => {
     setUsers(await backend.listUsers());
@@ -54,7 +56,27 @@ export default function AdminPage({ onBack }: { onBack?: () => void }) {
     return () => clearInterval(interval);
   }, [refresh]);
 
-  const unreadFeedback = feedback.filter((f) => !f.read).length;
+  const unreadFeedback = feedback.filter((f) => !f.fromOwner && !f.read).length;
+
+  const feedbackThreads = React.useMemo(() => {
+    const map = new Map<string, FeedbackItem[]>();
+    for (const item of feedback) {
+      const list = map.get(item.threadId) ?? [];
+      list.push(item);
+      map.set(item.threadId, list);
+    }
+    return [...map.entries()]
+      .map(([threadId, messages]) => ({
+        threadId,
+        identifier: messages[0]?.identifier ?? "",
+        messages: messages.sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+      }))
+      .sort((a, b) => {
+        const aLast = a.messages[a.messages.length - 1]?.createdAt ?? "";
+        const bLast = b.messages[b.messages.length - 1]?.createdAt ?? "";
+        return bLast.localeCompare(aLast);
+      });
+  }, [feedback]);
   const unresolvedErrors = errors.filter((e) => !e.resolved).length;
   const pendingUsers = users.filter((u) => u.status === "pending").length;
 
@@ -175,37 +197,103 @@ export default function AdminPage({ onBack }: { onBack?: () => void }) {
 
       {tab === "feedback" && (
         <div className="flex flex-col gap-3">
-          {feedback.length === 0 && <p className="text-sm text-muted-foreground">لا توجد ملاحظات بعد.</p>}
-          {feedback.map((f) => (
-            <Card key={f.id}>
-              <CardContent className="flex flex-col gap-2 pt-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">
-                    {new Date(f.createdAt).toLocaleString("ar-SA")}
-                  </span>
-                  <span className="flex items-center gap-1 text-sm font-bold" dir="ltr">
-                    <MessageSquare className="h-4 w-4 text-primary" />
-                    {f.identifier}
-                  </span>
-                </div>
-                <p className="text-sm">{f.message}</p>
-                {!f.read && (
-                  <Button
-                    size="sm"
-                    variant="outline"
+          {feedbackThreads.length === 0 && (
+            <p className="text-sm text-muted-foreground">لا توجد ملاحظات بعد.</p>
+          )}
+          {feedbackThreads.map((thread) => {
+            const last = thread.messages[thread.messages.length - 1];
+            const hasUnread = thread.messages.some((m) => !m.fromOwner && !m.read);
+            const open = openThreadId === thread.threadId;
+            return (
+              <Card key={thread.threadId}>
+                <CardContent className="flex flex-col gap-2 pt-4">
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between"
                     onClick={async () => {
-                      await backend.markFeedbackRead(f.id);
-                      refresh();
+                      setOpenThreadId(open ? null : thread.threadId);
+                      if (!open) {
+                        for (const m of thread.messages) {
+                          if (!m.fromOwner && !m.read) {
+                            await backend.markFeedbackRead(m.id);
+                          }
+                        }
+                        refresh();
+                      }
                     }}
                   >
-                    وضع كمقروءة
-                  </Button>
-                )}
-              </CardContent>
-            </Card>
-          ))}
+                    <span className="text-xs text-muted-foreground">
+                      {last ? new Date(last.createdAt).toLocaleString("ar-SA") : ""}
+                    </span>
+                    <span className="flex items-center gap-1 text-sm font-bold" dir="ltr">
+                      {hasUnread && <span className="h-2 w-2 rounded-full bg-primary" />}
+                      <MessageSquare className="h-4 w-4 text-primary" />
+                      {thread.identifier}
+                    </span>
+                  </button>
+
+                  {!open && last && (
+                    <p className="text-sm text-muted-foreground">
+                      <span className="font-bold text-foreground">
+                        {last.fromOwner ? "أنت: " : "المستخدم: "}
+                      </span>
+                      {last.message}
+                    </p>
+                  )}
+
+                  {open && (
+                    <>
+                      <div className="flex max-h-64 flex-col gap-2 overflow-y-auto">
+                        {thread.messages.map((m) => (
+                          <div
+                            key={m.id}
+                            className={`rounded-lg px-2 py-1.5 text-sm ${
+                              m.fromOwner ? "bg-primary/10 text-right" : "bg-secondary/60 text-right"
+                            }`}
+                          >
+                            <p className="text-[10px] font-bold text-muted-foreground">
+                              {m.fromOwner ? "أنت (الإدارة)" : "المستخدم"} ·{" "}
+                              {new Date(m.createdAt).toLocaleString("ar-SA")}
+                            </p>
+                            <p>{m.message}</p>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          placeholder="اكتب ردك للمستخدم..."
+                          value={replyDrafts[thread.threadId] ?? ""}
+                          onChange={(e) =>
+                            setReplyDrafts((prev) => ({
+                              ...prev,
+                              [thread.threadId]: e.target.value,
+                            }))
+                          }
+                          className="text-right"
+                        />
+                        <Button
+                          size="icon"
+                          disabled={!(replyDrafts[thread.threadId] ?? "").trim()}
+                          onClick={async () => {
+                            const text = (replyDrafts[thread.threadId] ?? "").trim();
+                            if (!text) return;
+                            await backend.replyToFeedback(thread.threadId, text);
+                            setReplyDrafts((prev) => ({ ...prev, [thread.threadId]: "" }));
+                            refresh();
+                          }}
+                        >
+                          <MessageSquare className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
+
 
       {tab === "broadcast" && (
         <Card>
