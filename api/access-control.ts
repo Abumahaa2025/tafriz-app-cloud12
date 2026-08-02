@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 
-type Action = "approve" | "revoke" | "generateCode" | "redeemCode";
+type Action = "approve" | "revoke" | "generateCode" | "redeemCode" | "replyFeedback";
 
 function adminClient(url: string, serviceKey: string) {
   return createClient(url, serviceKey, {
@@ -168,6 +168,70 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(400).json({ error: upErr?.message || "profile_update_failed" });
       }
       return res.status(200).json({ ok: true, profile: updated });
+    }
+
+    if (action === "replyFeedback") {
+      if (!profile?.is_owner) {
+        return res.status(403).json({ error: "owner_only" });
+      }
+      const threadId = String(req.body?.threadId || "").trim();
+      const message = String(req.body?.message || "").trim();
+      if (!threadId || !message) {
+        return res.status(400).json({ error: "missing_thread_or_message" });
+      }
+
+      // دعم الرسائل القديمة: قد يكون thread_id فارغًا والـ UI يمرّر id الرسالة
+      let { data: root, error: rootErr } = await admin
+        .from("feedback")
+        .select("id, user_id, identifier, thread_id")
+        .eq("thread_id", threadId)
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (rootErr) return res.status(400).json({ error: rootErr.message });
+
+      if (!root) {
+        const byId = await admin
+          .from("feedback")
+          .select("id, user_id, identifier, thread_id")
+          .eq("id", threadId)
+          .maybeSingle();
+        if (byId.error) return res.status(400).json({ error: byId.error.message });
+        root = byId.data;
+      }
+      if (!root) return res.status(404).json({ error: "thread_not_found" });
+
+      const resolvedThreadId = (root.thread_id as string | null) || (root.id as string);
+      if (!root.thread_id) {
+        await admin.from("feedback").update({ thread_id: resolvedThreadId }).eq("id", root.id);
+      }
+
+      const { error: insertErr } = await admin.from("feedback").insert({
+        id: crypto.randomUUID(),
+        user_id: root.user_id,
+        identifier: root.identifier,
+        message,
+        thread_id: resolvedThreadId,
+        from_owner: true,
+        read: true,
+        read_by_user: false,
+      });
+      if (insertErr) {
+        return res.status(400).json({
+          error:
+            insertErr.message.includes("from_owner") || insertErr.message.includes("thread_id")
+              ? "نفّذ ملف supabase/migrate-feedback-chat.sql في Supabase أولًا"
+              : insertErr.message,
+        });
+      }
+
+      await admin
+        .from("feedback")
+        .update({ read: true })
+        .eq("thread_id", resolvedThreadId)
+        .eq("from_owner", false);
+
+      return res.status(200).json({ ok: true, threadId: resolvedThreadId });
     }
 
     return res.status(400).json({ error: "unknown_action" });

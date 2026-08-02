@@ -277,9 +277,15 @@ export default function AdminPage({ onBack }: { onBack?: () => void }) {
                           onClick={async () => {
                             const text = (replyDrafts[thread.threadId] ?? "").trim();
                             if (!text) return;
-                            await backend.replyToFeedback(thread.threadId, text);
-                            setReplyDrafts((prev) => ({ ...prev, [thread.threadId]: "" }));
-                            refresh();
+                            try {
+                              await backend.replyToFeedback(thread.threadId, text);
+                              setReplyDrafts((prev) => ({ ...prev, [thread.threadId]: "" }));
+                              await refresh();
+                            } catch (err) {
+                              window.alert(
+                                err instanceof Error ? err.message : "تعذّر إرسال الرد"
+                              );
+                            }
                           }}
                         >
                           <MessageSquare className="h-4 w-4" />

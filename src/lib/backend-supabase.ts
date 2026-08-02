@@ -319,35 +319,8 @@ export const supabaseBackend: Backend = {
   },
 
   async replyToFeedback(threadId, message) {
-    const db = requireClient();
-    const { data: root, error: rootErr } = await db
-      .from("feedback")
-      .select("user_id, identifier, thread_id")
-      .eq("thread_id", threadId)
-      .order("created_at", { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    if (rootErr) throw new BackendError("unknown", rootErr.message);
-    if (!root) throw new BackendError("not_found", "المحادثة غير موجودة");
-
-    const { error } = await db.from("feedback").insert({
-      id: crypto.randomUUID(),
-      user_id: root.user_id,
-      identifier: root.identifier,
-      message,
-      thread_id: threadId,
-      from_owner: true,
-      read: true,
-      read_by_user: false,
-    });
-    if (error) throw new BackendError("unknown", error.message);
-
-    // علّم رسائل المستخدم في الخيط كمقروءة بعد رد المالك
-    await db
-      .from("feedback")
-      .update({ read: true })
-      .eq("thread_id", threadId)
-      .eq("from_owner", false);
+    // عبر service role حتى لا تفشل سياسة RLS أو الرسائل القديمة بدون thread_id
+    await callAccessControl("replyFeedback", { threadId, message });
   },
 
   async listFeedback() {
