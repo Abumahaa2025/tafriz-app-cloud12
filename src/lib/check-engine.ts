@@ -105,9 +105,16 @@ export function lookupPlate(
     return null;
   }
 
-  if (norm.length >= 4) {
+  if (norm.length >= 3) {
     for (const [key, row] of index) {
       if (key.includes(norm) || norm.includes(key)) return row;
+    }
+  }
+
+  // أرقام فقط بطول 2–3: أول لوحة تحتوي الرقم
+  if (digitsOnly.length >= 2 && lettersOnly.length === 0) {
+    for (const [key, row] of index) {
+      if (key.includes(digitsOnly)) return row;
     }
   }
 
