@@ -2,9 +2,17 @@ import * as React from "react";
 import { Copy, Check } from "lucide-react";
 import { SortResultRow } from "@/lib/sort-logic";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+
+const PAGE_SIZE = 80;
 
 export function ResultsTable({ rows }: { rows: SortResultRow[] }) {
   const [copiedIndex, setCopiedIndex] = React.useState<number | null>(null);
+  const [visibleCount, setVisibleCount] = React.useState(PAGE_SIZE);
+
+  React.useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [rows]);
 
   // Duplicate plate numbers are highlighted, same as the reference app.
   const plateCounts = React.useMemo(() => {
@@ -12,6 +20,8 @@ export function ResultsTable({ rows }: { rows: SortResultRow[] }) {
     rows.forEach((r) => counts.set(r.plate, (counts.get(r.plate) ?? 0) + 1));
     return counts;
   }, [rows]);
+
+  const visibleRows = rows.length > visibleCount ? rows.slice(0, visibleCount) : rows;
 
   function handleCopy(row: SortResultRow, index: number) {
     navigator.clipboard?.writeText(row.plate).catch(() => {});
@@ -26,7 +36,7 @@ export function ResultsTable({ rows }: { rows: SortResultRow[] }) {
         <div className="px-3 py-2">رقم اللوحة</div>
       </div>
       <div className="divide-y divide-border">
-        {rows.map((row, i) => {
+        {visibleRows.map((row, i) => {
           const isDuplicate = (plateCounts.get(row.plate) ?? 0) > 1;
           return (
             <div
@@ -63,6 +73,17 @@ export function ResultsTable({ rows }: { rows: SortResultRow[] }) {
           </div>
         )}
       </div>
+      {rows.length > visibleCount && (
+        <div className="border-t border-border p-2">
+          <Button
+            variant="secondary"
+            className="w-full"
+            onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
+          >
+            عرض المزيد ({visibleCount} / {rows.length})
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

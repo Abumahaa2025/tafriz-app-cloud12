@@ -12,13 +12,17 @@ import { ResultsTable } from "@/components/ResultsTable";
 import { ImportExportBar } from "@/components/ImportExportBar";
 import { AppMenu, MenuTarget } from "@/components/AppMenu";
 import { parseSpreadsheet, guessColumn, ParsedSheet } from "@/lib/xlsx-utils";
-import { runSort, SortResult } from "@/lib/sort-logic";
+import { runSortChunked, SortResult } from "@/lib/sort-logic";
 import { loadLocal, saveLocal } from "@/lib/storage";
+import { idbGet, idbRemove, idbSet } from "@/lib/idb";
 import { consumeSharedFile } from "@/lib/shared-file";
 import { listenForNativeSharedFile } from "@/lib/native-import";
 import { nativeShareText } from "@/lib/native-share";
 import { backend } from "@/lib/backend";
 import { useAuth } from "@/context/AuthContext";
+
+const SORT_DATA_IDB = "sort_data_sheet_v1";
+const SORT_REFERRAL_IDB = "sort_referral_sheet_v1";
 
 type NavShare = Navigator & {
   canShare?: (data: { files?: File[]; text?: string; title?: string }) => boolean;
@@ -30,21 +34,20 @@ type FileMeta = { name: string };
 
 interface PersistedSortState {
   dataFileMeta: FileMeta | null;
-  dataSheet: ParsedSheet | null;
   referralFileMeta: FileMeta | null;
-  referralSheet: ParsedSheet | null;
   plateColumn: string;
   streetColumn: string;
   mapColumn: string;
   referralPlateColumn: string;
   result: SortResult | null;
+  /** قديمة — لا تُحفظ بعد الآن (كانت تسبب بطئًا شديدًا) */
+  dataSheet?: ParsedSheet | null;
+  referralSheet?: ParsedSheet | null;
 }
 
 const EMPTY_STATE: PersistedSortState = {
   dataFileMeta: null,
-  dataSheet: null,
   referralFileMeta: null,
-  referralSheet: null,
   plateColumn: "",
   streetColumn: "",
   mapColumn: "",
@@ -66,7 +69,22 @@ function guessMapColumn(headers: string[]): string {
 // آخر: كانت useEffect الحفظ تكتب فوق البيانات المحفوظة بقيم فارغة قبل ما
 // تكتمل استعادتها.
 function readPersistedState(): PersistedSortState {
-  return loadLocal<PersistedSortState>("last_sort_state", EMPTY_STATE);
+  const raw = loadLocal<PersistedSortState>("last_sort_state", EMPTY_STATE);
+  // تنظيف التخزين القديم الثقيل مرة واحدة (لو بقي من نسخة سابقة)
+  if (raw.dataSheet || raw.referralSheet) {
+    const light: PersistedSortState = {
+      dataFileMeta: raw.dataFileMeta,
+      referralFileMeta: raw.referralFileMeta,
+      plateColumn: raw.plateColumn,
+      streetColumn: raw.streetColumn,
+      mapColumn: raw.mapColumn ?? "",
+      referralPlateColumn: raw.referralPlateColumn,
+      result: raw.result,
+    };
+    saveLocal("last_sort_state", light);
+    return light;
+  }
+  return raw;
 }
 
 interface SortPageProps {
@@ -83,7 +101,7 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
   // data file state (fileMeta persists the file NAME across reloads even
   // though the raw File object itself can't be stored in localStorage)
   const [dataFile, setDataFile] = React.useState<File | FileMeta | null>(initial.dataFileMeta);
-  const [dataSheet, setDataSheet] = React.useState<ParsedSheet | null>(initial.dataSheet);
+  const [dataSheet, setDataSheet] = React.useState<ParsedSheet | null>(null);
   const [dataProgress, setDataProgress] = React.useState<number | null>(null);
   const [dataPassword, setDataPassword] = React.useState("");
   const [plateColumn, setPlateColumn] = React.useState<string>(initial.plateColumn);
@@ -92,7 +110,7 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
 
   // referral file state
   const [referralFile, setReferralFile] = React.useState<File | FileMeta | null>(initial.referralFileMeta);
-  const [referralSheet, setReferralSheet] = React.useState<ParsedSheet | null>(initial.referralSheet);
+  const [referralSheet, setReferralSheet] = React.useState<ParsedSheet | null>(null);
   const [referralProgress, setReferralProgress] = React.useState<number | null>(null);
   const [referralPassword, setReferralPassword] = React.useState("");
   const [referralPlateColumn, setReferralPlateColumn] = React.useState<string>(initial.referralPlateColumn);
@@ -102,6 +120,21 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
   const [actionNotice, setActionNotice] = React.useState<string | null>(null);
   const resultsRef = React.useRef<HTMLDivElement | null>(null);
   const noticeTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // استعادة أوراق الداتا الثقيلة من IndexedDB (بدون تجميد الواجهة)
+  React.useEffect(() => {
+    let cancelled = false;
+    Promise.all([idbGet<ParsedSheet>(SORT_DATA_IDB), idbGet<ParsedSheet>(SORT_REFERRAL_IDB)]).then(
+      ([data, referral]) => {
+        if (cancelled) return;
+        if (data?.rows?.length) setDataSheet(data);
+        if (referral?.rows?.length) setReferralSheet(referral);
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // استقبال ملف شارَك المستخدم من تطبيق ثاني (مثل واتساب) عبر public/sw.js —
   // هذا وحده يحتاج useEffect لأنه يعتمد على رابط الصفحة (async)
@@ -117,20 +150,30 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // حفظ الحالة كل ما تغيّرت (بدون حفظ كائن File نفسه — غير قابل للتخزين)
+  // حفظ خفيف فقط في localStorage — الأوراق الكبيرة تذهب لـ IndexedDB
   React.useEffect(() => {
-    saveLocal("last_sort_state", {
+    const light: PersistedSortState = {
       dataFileMeta: dataFile ? { name: dataFile.name } : null,
-      dataSheet,
       referralFileMeta: referralFile ? { name: referralFile.name } : null,
-      referralSheet,
       plateColumn,
       streetColumn,
       mapColumn,
       referralPlateColumn,
       result,
-    });
-  }, [dataFile, dataSheet, referralFile, referralSheet, plateColumn, streetColumn, mapColumn, referralPlateColumn, result]);
+    };
+    const timer = setTimeout(() => saveLocal("last_sort_state", light), 200);
+    return () => clearTimeout(timer);
+  }, [dataFile, referralFile, plateColumn, streetColumn, mapColumn, referralPlateColumn, result]);
+
+  React.useEffect(() => {
+    if (dataSheet) idbSet(SORT_DATA_IDB, dataSheet).catch(() => {});
+    else idbRemove(SORT_DATA_IDB).catch(() => {});
+  }, [dataSheet]);
+
+  React.useEffect(() => {
+    if (referralSheet) idbSet(SORT_REFERRAL_IDB, referralSheet).catch(() => {});
+    else idbRemove(SORT_REFERRAL_IDB).catch(() => {});
+  }, [referralSheet]);
 
   async function handleDataSelect(file: File) {
     setDataFile(file);
@@ -139,6 +182,7 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
     try {
       const parsed = await parseSpreadsheet(file);
       setDataSheet(parsed);
+      // لا نرفع للسحابة كل صفوف الملفات الضخمة — يكفي عيّنة للأرشيف
       backend.saveUpload(file.name, parsed.headers, parsed.rows).catch(() => {});
       const guessedPlate = guessColumn(parsed.headers, ["لوحة", "اللوحة", "Plate"]);
       setPlateColumn(guessedPlate ?? "");
@@ -187,13 +231,15 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
     setReferralProgress(null);
     setReferralPlateColumn("");
     setResult(null);
+    idbRemove(SORT_DATA_IDB).catch(() => {});
+    idbRemove(SORT_REFERRAL_IDB).catch(() => {});
   }
 
-  function handleRunSort() {
+  async function handleRunSort() {
     if (!dataSheet || !referralSheet || !plateColumn || !streetColumn || !referralPlateColumn) {
       return;
     }
-    const res = runSort(
+    const res = await runSortChunked(
       dataSheet,
       plateColumn,
       streetColumn,

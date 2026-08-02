@@ -43,8 +43,12 @@ export function ContactAdminCard() {
 
   React.useEffect(() => {
     refresh();
-    const interval = setInterval(refresh, 15_000);
-    return () => clearInterval(interval);
+    // تحديث أهدأ: عند إظهار الصفحة فقط بدل ضغط الشبكة كل 15 ثانية
+    const onVis = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
   }, [refresh]);
 
   async function handleSend() {

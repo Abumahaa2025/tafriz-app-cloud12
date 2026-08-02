@@ -25,15 +25,18 @@ export default function MapsPage({ onBack }: { onBack?: () => void }) {
   const [selectedPlate, setSelectedPlate] = React.useState<string | null>(null);
   const [mode, setMode] = React.useState<"fleet" | "me">("fleet");
 
-  // إعادة القراءة عند العودة للتبويب بعد فرز جديد
+  // إعادة القراءة عند إظهار الصفحة فقط (بدون polling كل ثوانٍ)
   const [tick, setTick] = React.useState(0);
   React.useEffect(() => {
-    const onFocus = () => setTick((t) => t + 1);
-    window.addEventListener("focus", onFocus);
-    const interval = setInterval(() => setTick((t) => t + 1), 4000);
+    const bump = () => setTick((t) => t + 1);
+    const onVis = () => {
+      if (document.visibilityState === "visible") bump();
+    };
+    window.addEventListener("focus", bump);
+    document.addEventListener("visibilitychange", onVis);
     return () => {
-      window.removeEventListener("focus", onFocus);
-      clearInterval(interval);
+      window.removeEventListener("focus", bump);
+      document.removeEventListener("visibilitychange", onVis);
     };
   }, []);
 

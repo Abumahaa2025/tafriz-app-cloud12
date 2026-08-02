@@ -18,7 +18,13 @@ export interface ParsedSheet {
  */
 export async function parseSpreadsheet(file: File): Promise<ParsedSheet> {
   const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: "array" });
+  // خيارات أخف: بدون تنسيقات/تواريخ معقّدة — أسرع على الملفات الكبيرة
+  const workbook = XLSX.read(buffer, {
+    type: "array",
+    cellDates: false,
+    cellStyles: false,
+    sheetStubs: false,
+  });
   const firstSheetName = workbook.SheetNames[0];
   const sheet = workbook.Sheets[firstSheetName];
 
@@ -26,6 +32,7 @@ export async function parseSpreadsheet(file: File): Promise<ParsedSheet> {
     header: 1,
     defval: "",
     blankrows: false,
+    raw: false,
   });
 
   // أول صف فيه خلية غير فارغة واحدة على الأقل يُعتبر صف العناوين

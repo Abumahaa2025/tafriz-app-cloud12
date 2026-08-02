@@ -66,3 +66,60 @@ export function runSort(
     distinctMatchedPlates: distinctMatched.size,
   };
 }
+
+/** فرز على دفعات حتى لا يتجمّد الواجهة مع ملفات مئات الآلاف */
+export async function runSortChunked(
+  data: ParsedSheet,
+  dataPlateColumn: string,
+  dataStreetColumn: string,
+  referral: ParsedSheet,
+  referralPlateColumn: string,
+  dataMapColumn?: string,
+  chunkSize = 8000
+): Promise<SortResult> {
+  const referralPlates = new Set(
+    referral.rows
+      .map((r) => normalizePlate(r[referralPlateColumn]))
+      .filter((p) => p.length > 0)
+  );
+
+  const matchedRows: SortResultRow[] = [];
+  const distinctMatched = new Set<string>();
+  let unsortedCount = 0;
+  const rows = data.rows;
+
+  for (let start = 0; start < rows.length; start += chunkSize) {
+    const end = Math.min(start + chunkSize, rows.length);
+    for (let i = start; i < end; i++) {
+      const row = rows[i];
+      const plateRaw = String(row[dataPlateColumn] ?? "");
+      const plateNorm = normalizePlate(plateRaw);
+      const street = String(row[dataStreetColumn] ?? "");
+
+      if (plateNorm.length > 0 && referralPlates.has(plateNorm)) {
+        const mapUrl = findMapsUrlInRow(row, dataMapColumn);
+        const coords = mapUrl ? coordsFromMapsUrl(mapUrl) : null;
+        matchedRows.push({
+          street,
+          plate: plateRaw,
+          mapUrl,
+          lat: coords?.lat ?? null,
+          lng: coords?.lng ?? null,
+        });
+        distinctMatched.add(plateNorm);
+      } else {
+        unsortedCount += 1;
+      }
+    }
+    // أفس الإطارات للواجهة
+    if (end < rows.length) {
+      await new Promise<void>((r) => setTimeout(r, 0));
+    }
+  }
+
+  return {
+    matchedRows,
+    unsortedCount,
+    distinctMatchedPlates: distinctMatched.size,
+  };
+}
