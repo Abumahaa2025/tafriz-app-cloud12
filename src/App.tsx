@@ -36,7 +36,23 @@ function MainApp() {
           {tab === "sort" && <SortPage onNavigate={(target) => setOverlay(target)} />}
           {tab === "maps" && <MapsPage />}
           {tab === "check" && <CheckPage />}
-          {tab === "record" && <RecordPage />}
+          {tab === "record" && (
+            <RecordPage
+              isOwner={!!user?.isOwner}
+              onNavigateTab={(key) => {
+                setOverlay(null);
+                setTab(key);
+              }}
+              onOpenPage={(target) => {
+                if (target === "home") {
+                  setOverlay(null);
+                  setTab("sort");
+                  return;
+                }
+                setOverlay(target);
+              }}
+            />
+          )}
           <BottomNav active={tab} onChange={setTab} />
         </>
       )}
