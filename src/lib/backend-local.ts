@@ -69,6 +69,20 @@ export const localBackend: Backend = {
     if (users.some((u) => u.identifierType === identifierType && u.identifier === identifier)) {
       throw new BackendError("unknown", "هذا الحساب موجود بالفعل، جرّب تسجيل الدخول");
     }
+    {
+      const p = password;
+      const hasLetter = /[A-Za-z\u0600-\u06FF]/.test(p);
+      const hasDigit = /\d/.test(p);
+      const hasSpecial = /[^A-Za-z0-9\u0600-\u06FF]/.test(p);
+      const hasMixed = /[a-z]/.test(p) && /[A-Z]/.test(p);
+      const classes = [hasLetter, hasDigit, hasSpecial || hasMixed].filter(Boolean).length;
+      if (p.length < 8 || classes < 2) {
+        throw new BackendError(
+          "bad_password",
+          "كلمة المرور يجب أن تكون متوسطة على الأقل: 8 أحرف أو أكثر وتشمل حرفًا ورقمًا"
+        );
+      }
+    }
     // لو حدّد المطوّر OWNER_IDENTIFIER بملف owner-config.ts، المالك الوحيد
     // الممكن هو صاحب هذا البريد/الرقم بالضبط — أي أحد غيره يدخل "قيد
     // المراجعة" دائمًا مهما كان ترتيب تسجيله. لو الحقل فاضي (وضع التجربة
@@ -120,6 +134,20 @@ export const localBackend: Backend = {
   async changePassword(newPassword) {
     const id = loadLocal<string | null>(SESSION_KEY, null);
     if (!id) throw new BackendError("not_allowed", "سجّل الدخول أولًا");
+    {
+      const p = newPassword;
+      const hasLetter = /[A-Za-z\u0600-\u06FF]/.test(p);
+      const hasDigit = /\d/.test(p);
+      const hasSpecial = /[^A-Za-z0-9\u0600-\u06FF]/.test(p);
+      const hasMixed = /[a-z]/.test(p) && /[A-Z]/.test(p);
+      const classes = [hasLetter, hasDigit, hasSpecial || hasMixed].filter(Boolean).length;
+      if (p.length < 8 || classes < 2) {
+        throw new BackendError(
+          "bad_password",
+          "كلمة المرور يجب أن تكون متوسطة على الأقل: 8 أحرف أو أكثر وتشمل حرفًا ورقمًا"
+        );
+      }
+    }
     const users = readUsers();
     writeUsers(users.map((u) => (u.id === id ? { ...u, password: newPassword } : u)));
   },

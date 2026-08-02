@@ -1,6 +1,7 @@
 import { supabase } from "./supabase-client";
 import { OWNER_IDENTIFIER } from "./owner-config";
 import { matchesPlateStreet } from "./search-text";
+import { isPasswordAcceptable } from "./password-strength";
 import {
   AppUser,
   Backend,
@@ -279,6 +280,12 @@ export const supabaseBackend: Backend = {
   },
 
   async changePassword(newPassword) {
+    if (!isPasswordAcceptable(newPassword)) {
+      throw new BackendError(
+        "bad_password",
+        "كلمة المرور يجب أن تكون متوسطة على الأقل: 8 أحرف أو أكثر وتشمل حرفًا ورقمًا"
+      );
+    }
     const { error } = await requireClient().auth.updateUser({ password: newPassword });
     if (error) throw new BackendError("unknown", error.message);
   },

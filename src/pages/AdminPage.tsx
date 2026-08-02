@@ -59,18 +59,25 @@ export default function AdminPage({ onBack }: { onBack?: () => void }) {
   const unreadFeedback = feedback.filter((f) => !f.fromOwner && !f.read).length;
 
   const feedbackThreads = React.useMemo(() => {
+    // محادثة واحدة لكل مستخدم — حتى لو تفرّقت thread_id قديمًا
     const map = new Map<string, FeedbackItem[]>();
     for (const item of feedback) {
-      const list = map.get(item.threadId) ?? [];
+      const key = (item.userId || item.identifier || item.threadId).trim();
+      const list = map.get(key) ?? [];
       list.push(item);
-      map.set(item.threadId, list);
+      map.set(key, list);
     }
     return [...map.entries()]
-      .map(([threadId, messages]) => ({
-        threadId,
-        identifier: messages[0]?.identifier ?? "",
-        messages: messages.sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
-      }))
+      .map(([key, messages]) => {
+        const sorted = messages.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+        const threadId = sorted[0]?.threadId || key;
+        return {
+          key,
+          threadId,
+          identifier: sorted[0]?.identifier ?? "",
+          messages: sorted,
+        };
+      })
       .sort((a, b) => {
         const aLast = a.messages[a.messages.length - 1]?.createdAt ?? "";
         const bLast = b.messages[b.messages.length - 1]?.createdAt ?? "";
@@ -203,15 +210,16 @@ export default function AdminPage({ onBack }: { onBack?: () => void }) {
           {feedbackThreads.map((thread) => {
             const last = thread.messages[thread.messages.length - 1];
             const hasUnread = thread.messages.some((m) => !m.fromOwner && !m.read);
-            const open = openThreadId === thread.threadId;
+            const open = openThreadId === thread.key;
             return (
-              <Card key={thread.threadId}>
+              <Card key={thread.key}>
                 <CardContent className="flex flex-col gap-2 pt-4">
                   <button
                     type="button"
-                    className="flex w-full items-center justify-between"
+                    className="flex w-full flex-col gap-1 text-right"
                     onClick={async () => {
-                      setOpenThreadId(open ? null : thread.threadId);
+                      const nextOpen = open ? null : thread.key;
+                      setOpenThreadId(nextOpen);
                       if (!open) {
                         for (const m of thread.messages) {
                           if (!m.fromOwner && !m.read) {
@@ -222,24 +230,25 @@ export default function AdminPage({ onBack }: { onBack?: () => void }) {
                       }
                     }}
                   >
-                    <span className="text-xs text-muted-foreground">
-                      {last ? new Date(last.createdAt).toLocaleString("ar-SA") : ""}
-                    </span>
-                    <span className="flex items-center gap-1 text-sm font-bold" dir="ltr">
-                      {hasUnread && <span className="h-2 w-2 rounded-full bg-primary" />}
-                      <MessageSquare className="h-4 w-4 text-primary" />
-                      {thread.identifier}
-                    </span>
-                  </button>
-
-                  {!open && last && (
-                    <p className="text-sm text-muted-foreground">
-                      <span className="font-bold text-foreground">
-                        {last.fromOwner ? "أنت: " : "المستخدم: "}
+                    <span className="flex w-full items-center justify-between">
+                      <span className="text-xs text-muted-foreground">
+                        {last ? new Date(last.createdAt).toLocaleString("ar-SA") : ""}
                       </span>
-                      {last.message}
-                    </p>
-                  )}
+                      <span className="flex items-center gap-1 text-sm font-bold" dir="ltr">
+                        {hasUnread && <span className="h-2 w-2 rounded-full bg-primary" />}
+                        <MessageSquare className="h-4 w-4 text-primary" />
+                        {thread.identifier}
+                      </span>
+                    </span>
+                    {!open && last && (
+                      <p className="text-sm text-muted-foreground">
+                        <span className="font-bold text-foreground">
+                          {last.fromOwner ? "أنت: " : "المستخدم: "}
+                        </span>
+                        {last.message}
+                      </p>
+                    )}
+                  </button>
 
                   {open && (
                     <>
@@ -262,24 +271,25 @@ export default function AdminPage({ onBack }: { onBack?: () => void }) {
                       <div className="flex items-center gap-2">
                         <Input
                           placeholder="اكتب ردك للمستخدم..."
-                          value={replyDrafts[thread.threadId] ?? ""}
+                          value={replyDrafts[thread.key] ?? ""}
                           onChange={(e) =>
                             setReplyDrafts((prev) => ({
                               ...prev,
-                              [thread.threadId]: e.target.value,
+                              [thread.key]: e.target.value,
                             }))
                           }
                           className="text-right"
                         />
                         <Button
                           size="icon"
-                          disabled={!(replyDrafts[thread.threadId] ?? "").trim()}
+                          disabled={!(replyDrafts[thread.key] ?? "").trim()}
                           onClick={async () => {
-                            const text = (replyDrafts[thread.threadId] ?? "").trim();
+                            const text = (replyDrafts[thread.key] ?? "").trim();
                             if (!text) return;
                             try {
                               await backend.replyToFeedback(thread.threadId, text);
-                              setReplyDrafts((prev) => ({ ...prev, [thread.threadId]: "" }));
+                              setReplyDrafts((prev) => ({ ...prev, [thread.key]: "" }));
+                              setOpenThreadId(thread.key);
                               await refresh();
                             } catch (err) {
                               window.alert(

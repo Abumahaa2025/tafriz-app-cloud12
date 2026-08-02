@@ -19,6 +19,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useAuth } from "@/context/AuthContext";
 import { IdentifierType, BackendError } from "@/lib/backend-types";
 import { getSupportPhones } from "@/lib/support-contact";
+import {
+  assessPasswordStrength,
+  isPasswordAcceptable,
+  PASSWORD_RULE_HINT,
+  passwordStrengthLabel,
+} from "@/lib/password-strength";
 
 type Mode = "signin" | "signup";
 
@@ -55,8 +61,12 @@ export default function LoginPage() {
       setError(`يرجى إدخال ${idLabel}`);
       return;
     }
-    if (password.length < 4) {
-      setError("كلمة المرور يجب أن لا تقل عن 4 خانات");
+    if (mode === "signup" && !isPasswordAcceptable(password)) {
+      setError(PASSWORD_RULE_HINT);
+      return;
+    }
+    if (mode === "signin" && password.length < 1) {
+      setError("يرجى إدخال كلمة المرور");
       return;
     }
     if (mode === "signup" && password !== confirmPassword) {
@@ -236,6 +246,21 @@ export default function LoginPage() {
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
+              {mode === "signup" && password.length > 0 && (
+                <p
+                  className={
+                    "text-[11px] font-bold " +
+                    (assessPasswordStrength(password) === "weak"
+                      ? "text-destructive"
+                      : assessPasswordStrength(password) === "medium"
+                        ? "text-amber-600"
+                        : "text-primary")
+                  }
+                >
+                  قوة كلمة المرور: {passwordStrengthLabel(assessPasswordStrength(password))}
+                  {assessPasswordStrength(password) === "weak" ? ` — ${PASSWORD_RULE_HINT}` : ""}
+                </p>
+              )}
 
               {mode === "signup" && (
                 <div className="relative">

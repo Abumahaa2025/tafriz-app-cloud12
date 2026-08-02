@@ -7,6 +7,12 @@ import { Badge } from "@/components/ui/badge";
 import { ContactAdminCard } from "@/components/ContactAdminCard";
 import { useAuth } from "@/context/AuthContext";
 import { backend } from "@/lib/backend";
+import {
+  assessPasswordStrength,
+  isPasswordAcceptable,
+  PASSWORD_RULE_HINT,
+  passwordStrengthLabel,
+} from "@/lib/password-strength";
 
 export default function AccountPage({
   onBack,
@@ -20,8 +26,8 @@ export default function AccountPage({
   const [status, setStatus] = React.useState<string | null>(null);
 
   async function handleChangePassword() {
-    if (newPassword.length < 4) {
-      setStatus("كلمة المرور يجب أن تكون 4 أحرف على الأقل");
+    if (!isPasswordAcceptable(newPassword)) {
+      setStatus(PASSWORD_RULE_HINT);
       return;
     }
     await backend.changePassword(newPassword);
@@ -75,6 +81,18 @@ export default function AccountPage({
             />
             <Button onClick={handleChangePassword}>حفظ</Button>
           </div>
+          {newPassword.length > 0 && (
+            <p
+              className={
+                "text-[11px] font-bold " +
+                (assessPasswordStrength(newPassword) === "weak"
+                  ? "text-destructive"
+                  : "text-primary")
+              }
+            >
+              القوة: {passwordStrengthLabel(assessPasswordStrength(newPassword))}
+            </p>
+          )}
           {status && <p className="text-xs font-bold text-primary">{status}</p>}
         </CardContent>
       </Card>

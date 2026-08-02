@@ -7,24 +7,19 @@ import { backend } from "@/lib/backend";
 import { FeedbackItem } from "@/lib/backend-types";
 import { getSupportPhones } from "@/lib/support-contact";
 import { useAuth } from "@/context/AuthContext";
+import { ensureNotificationPermission } from "@/lib/feedback-notify";
 
-function groupThreads(items: FeedbackItem[]): { threadId: string; messages: FeedbackItem[] }[] {
-  const map = new Map<string, FeedbackItem[]>();
-  for (const item of items) {
-    const list = map.get(item.threadId) ?? [];
-    list.push(item);
-    map.set(item.threadId, list);
-  }
-  return [...map.entries()]
-    .map(([threadId, messages]) => ({
-      threadId,
-      messages: messages.sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
-    }))
-    .sort((a, b) => {
-      const aLast = a.messages[a.messages.length - 1]?.createdAt ?? "";
-      const bLast = b.messages[b.messages.length - 1]?.createdAt ?? "";
-      return bLast.localeCompare(aLast);
-    });
+const OPEN_THREAD_KEY = "tafriz_open_feedback_thread";
+
+/** محادثة واحدة مستمرة للمستخدم — تدمج الرسائل القديمة إن تفرّقت thread_id */
+function groupAsOneConversation(items: FeedbackItem[]): {
+  threadId: string;
+  messages: FeedbackItem[];
+}[] {
+  if (items.length === 0) return [];
+  const messages = [...items].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const threadId = messages[0]?.threadId || messages[0].id;
+  return [{ threadId, messages }];
 }
 
 export function ContactAdminCard() {
@@ -33,31 +28,69 @@ export function ContactAdminCard() {
   const [message, setMessage] = React.useState("");
   const [replyDrafts, setReplyDrafts] = React.useState<Record<string, string>>({});
   const [sent, setSent] = React.useState(false);
-  const [threads, setThreads] = React.useState<{ threadId: string; messages: FeedbackItem[] }[]>([]);
-  const [openThreadId, setOpenThreadId] = React.useState<string | null>(null);
+  const [threads, setThreads] = React.useState<{ threadId: string; messages: FeedbackItem[] }[]>(
+    []
+  );
+  const [openThreadId, setOpenThreadId] = React.useState<string | null>(() => {
+    try {
+      return sessionStorage.getItem(OPEN_THREAD_KEY);
+    } catch {
+      return null;
+    }
+  });
 
   const refresh = React.useCallback(async () => {
     const items = await backend.listMyFeedback();
-    setThreads(groupThreads(items));
+    const grouped = groupAsOneConversation(items);
+    setThreads(grouped);
+  // أبقِ المحادثة مفتوحة إن وُجدت (بدون إجبار المستخدم على فتحها من جديد)
+    if (grouped.length > 0) {
+      setOpenThreadId((prev) => {
+        const next = prev && grouped.some((t) => t.threadId === prev) ? prev : grouped[0].threadId;
+        try {
+          sessionStorage.setItem(OPEN_THREAD_KEY, next);
+        } catch {
+          // ignore
+        }
+        return next;
+      });
+    }
   }, []);
 
   React.useEffect(() => {
     refresh();
-    // تحديث أهدأ: عند إظهار الصفحة فقط بدل ضغط الشبكة كل 15 ثانية
+    ensureNotificationPermission().catch(() => {});
     const onVis = () => {
       if (document.visibilityState === "visible") refresh();
     };
     document.addEventListener("visibilitychange", onVis);
-    return () => document.removeEventListener("visibilitychange", onVis);
+    // تحديث حي أثناء فتح المحادثة حتى تستمر بدون إعادة الدخول
+    const interval = setInterval(refresh, 12_000);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      clearInterval(interval);
+    };
   }, [refresh]);
 
   async function handleSend() {
     if (!message.trim() || !user) return;
-    await backend.submitFeedback(user.identifier, message.trim());
+    const existingThreadId = threads[0]?.threadId;
+    await backend.submitFeedback(user.identifier, message.trim(), existingThreadId);
     setMessage("");
     setSent(true);
     setTimeout(() => setSent(false), 2000);
     await refresh();
+    if (existingThreadId || threads[0]?.threadId) {
+      const tid = existingThreadId || threads[0]?.threadId;
+      if (tid) {
+        setOpenThreadId(tid);
+        try {
+          sessionStorage.setItem(OPEN_THREAD_KEY, tid);
+        } catch {
+          // ignore
+        }
+      }
+    }
   }
 
   async function handleThreadReply(threadId: string) {
@@ -66,11 +99,22 @@ export function ContactAdminCard() {
     if (!text) return;
     await backend.submitFeedback(user.identifier, text, threadId);
     setReplyDrafts((prev) => ({ ...prev, [threadId]: "" }));
+    setOpenThreadId(threadId);
+    try {
+      sessionStorage.setItem(OPEN_THREAD_KEY, threadId);
+    } catch {
+      // ignore
+    }
     await refresh();
   }
 
   async function openThread(threadId: string) {
-    setOpenThreadId((prev) => (prev === threadId ? null : threadId));
+    setOpenThreadId(threadId);
+    try {
+      sessionStorage.setItem(OPEN_THREAD_KEY, threadId);
+    } catch {
+      // ignore
+    }
     await backend.markFeedbackThreadReadByUser(threadId);
     await refresh();
   }
@@ -114,9 +158,12 @@ export function ContactAdminCard() {
 
         <div className="flex items-center gap-2">
           <Input
-            placeholder="اكتب رسالة جديدة للإدارة..."
+            placeholder="اكتب رسالة للإدارة (نفس المحادثة)..."
             value={message}
             onChange={(e) => setMessage(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleSend();
+            }}
             className="text-right"
           />
           <Button size="icon" onClick={handleSend} disabled={!message.trim()}>
@@ -127,18 +174,20 @@ export function ContactAdminCard() {
 
         {threads.length > 0 && (
           <div className="flex flex-col gap-2 border-t border-border pt-3">
-            <p className="text-xs font-bold text-muted-foreground">محادثاتك مع الإدارة</p>
+            <p className="text-xs font-bold text-muted-foreground">محادثتك مع الإدارة</p>
             {threads.map((thread) => {
               const last = thread.messages[thread.messages.length - 1];
               const unread = thread.messages.some((m) => m.fromOwner && !m.readByUser);
               const open = openThreadId === thread.threadId;
               return (
-                <div key={thread.threadId} className="rounded-xl border border-border px-3 py-2">
-                  <button
-                    type="button"
-                    className="flex w-full items-center justify-between gap-2 text-right"
-                    onClick={() => openThread(thread.threadId)}
-                  >
+                <div
+                  key={thread.threadId}
+                  className="cursor-pointer rounded-xl border border-border px-3 py-2"
+                  onClick={() => {
+                    if (!open) openThread(thread.threadId);
+                  }}
+                >
+                  <div className="flex w-full items-center justify-between gap-2 text-right">
                     <span className="text-[11px] text-muted-foreground">
                       {last ? new Date(last.createdAt).toLocaleString("ar-SA") : ""}
                     </span>
@@ -146,12 +195,15 @@ export function ContactAdminCard() {
                       {unread && <span className="h-2 w-2 rounded-full bg-primary" />}
                       {last?.fromOwner ? "رد من الإدارة" : "رسالتك"}
                     </span>
-                  </button>
+                  </div>
                   {!open && last && (
                     <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{last.message}</p>
                   )}
                   {open && (
-                    <div className="mt-2 flex flex-col gap-2">
+                    <div
+                      className="mt-2 flex flex-col gap-2"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       {thread.messages.map((m) => (
                         <div
                           key={m.id}

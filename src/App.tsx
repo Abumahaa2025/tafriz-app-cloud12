@@ -14,6 +14,7 @@ import PrivacyPage from "@/pages/PrivacyPage";
 import DatabasePage from "@/pages/DatabasePage";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { backend } from "@/lib/backend";
+import { FeedbackNotifyWatcher } from "@/components/FeedbackNotifyWatcher";
 
 type OverlayPage = MenuTarget | "ai-scan" | null;
 
@@ -28,6 +29,7 @@ function MainApp() {
 
   return (
     <div className="min-h-screen bg-background">
+      <FeedbackNotifyWatcher />
       {/* الشاشة الأساسية (التبويبات الأربعة الأصلية) */}
       {overlay === null && (
         <>

@@ -54,10 +54,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (
     (identifierType !== "email" && identifierType !== "phone") ||
     !identifier ||
-    typeof password !== "string" ||
-    password.length < 4
+    typeof password !== "string"
   ) {
     return res.status(400).json({ error: "invalid_payload" });
+  }
+  // متوسط فأعلى: 8+ وتشمل حرفًا ورقمًا على الأقل
+  {
+    const p = password;
+    const hasLetter = /[A-Za-z\u0600-\u06FF]/.test(p);
+    const hasDigit = /\d/.test(p);
+    const hasSpecial = /[^A-Za-z0-9\u0600-\u06FF]/.test(p);
+    const hasMixed = /[a-z]/.test(p) && /[A-Z]/.test(p);
+    const classes = [hasLetter, hasDigit, hasSpecial || hasMixed].filter(Boolean).length;
+    if (p.length < 8 || classes < 2) {
+      return res.status(400).json({
+        error: "weak_password",
+        message:
+          "كلمة المرور يجب أن تكون متوسطة على الأقل: 8 أحرف أو أكثر وتشمل حرفًا ورقمًا",
+      });
+    }
   }
 
   const admin = createClient(url, serviceKey, {
