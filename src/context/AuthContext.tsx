@@ -3,7 +3,6 @@ import { backend } from "@/lib/backend";
 import { AppUser, BackendError, IdentifierType } from "@/lib/backend-types";
 import { ensureNotificationPermission } from "@/lib/feedback-notify";
 import { getSupportPhones } from "@/lib/support-contact";
-import { personalActivationCode } from "@/lib/personal-code";
 
 interface AuthContextValue {
   user: AppUser | null;
@@ -25,16 +24,15 @@ const REVOKED_NOTIFIED_KEY = "tafriz_revoked_notified_v1";
 async function notifyAccountRevoked(user: AppUser) {
   const phones = getSupportPhones();
   const phone = phones[0]?.phone;
-  const code = personalActivationCode(user.id);
   const body =
     `تم إيقاف حسابك من الإدارة. تواصل عبر واتساب لإعادة التفعيل.` +
     (phone ? ` الرقم: +${phone}.` : "") +
-    ` رمزك الشخصي: ${code}`;
+    ` التفعيل يتم فقط بعد موافقة المالك أو إرسال رمز تفعيل منه.`;
 
   try {
     localStorage.setItem(
       REVOKED_NOTIFIED_KEY,
-      JSON.stringify({ at: Date.now(), userId: user.id, code })
+      JSON.stringify({ at: Date.now(), userId: user.id })
     );
   } catch {
     // ignore
@@ -198,7 +196,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(null);
       throw new BackendError(
         "not_allowed",
-        "تم إيقاف حسابك من الإدارة. تواصل عبر واتساب لإعادة التفعيل برمزك الشخصي."
+        "تم إيقاف حسابك من الإدارة. تواصل عبر واتساب — إعادة التفعيل فقط بموافقة المالك أو برمز يرسله هو."
       );
     }
     statusRef.current = u.status;

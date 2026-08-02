@@ -338,6 +338,15 @@ export const localBackend: Backend = {
     if (isPersonalCodeFormat(personal)) {
       if (personal !== personalActivationCode(sessionId)) return false;
       const users = readUsers();
+      const me = users.find((u) => u.id === sessionId);
+      if (!me) return false;
+      // الموقوف لا يُفعَّل بالرمز الشخصي — فقط موافقة المالك أو رمز يولّده المالك
+      if (me.status === "revoked") {
+        throw new BackendError(
+          "not_allowed",
+          "الحساب موقوف. إعادة التفعيل فقط من المالك عبر إدارة التحكم أو برمز تفعيل يرسله المالك."
+        );
+      }
       const expires = new Date();
       expires.setDate(expires.getDate() + 30);
       writeUsers(

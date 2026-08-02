@@ -121,9 +121,12 @@ async function callAccessControl<T = { ok: boolean }>(
     },
     body: JSON.stringify({ action, ...body }),
   });
-  const json = (await resp.json().catch(() => ({}))) as T & { error?: string };
+  const json = (await resp.json().catch(() => ({}))) as T & { error?: string; message?: string };
   if (!resp.ok) {
-    throw new BackendError("unknown", json.error || `access_control_${resp.status}`);
+    throw new BackendError(
+      "unknown",
+      json.message || json.error || `access_control_${resp.status}`
+    );
   }
   return json;
 }
@@ -475,7 +478,8 @@ export const supabaseBackend: Backend = {
     try {
       await callAccessControl("redeemCode", { code });
       return true;
-    } catch {
+    } catch (err) {
+      if (err instanceof BackendError) throw err;
       return false;
     }
   },

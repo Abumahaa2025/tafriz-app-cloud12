@@ -236,7 +236,7 @@ export default function AdminPage({ onBack }: { onBack?: () => void }) {
                             )
                           );
                           flashAction(
-                            `تم إيقاف ${u.identifier} — الإشارة حمراء ورمزه ${personalActivationCode(u.id)}`
+                            `تم إيقاف ${u.identifier} — لن يُفعَّل إلا بموافقتك أو برمز تولّده وترسله`
                           );
                           await refresh();
                         } catch (err) {
@@ -466,8 +466,8 @@ export default function AdminPage({ onBack }: { onBack?: () => void }) {
             <CardContent className="flex items-start gap-2 pt-4 text-xs text-muted-foreground">
               <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
               <span>
-                ولّد رمزًا وأعطه لمستخدم مباشرة (مكالمة، واتساب، شخصيًا) — يدخله
-                في شاشة "قيد المراجعة" عنده فيتفعّل حسابه فورًا بدون انتظار.
+                ولّد رمزًا وأرسله للمستخدم بنفسك (واتساب/اتصال). الحساب الموقوف لا
+                يُفعَّل تلقائيًا — إما زر «تفعيل» هنا أو رمز تولّده وترسله.
               </span>
             </CardContent>
           </Card>

@@ -6,19 +6,16 @@ import { Input } from "@/components/ui/input";
 import { useAuth } from "@/context/AuthContext";
 import { getSupportPhones } from "@/lib/support-contact";
 import { backend } from "@/lib/backend";
-import { personalActivationCode } from "@/lib/personal-code";
 
 export default function PendingApprovalPage() {
   const { user, signOut, refresh } = useAuth();
   const revoked = user?.status === "revoked";
   const primaryPhone = getSupportPhones()[0]?.phone;
-  const personalCode = user ? personalActivationCode(user.id) : "";
 
   const [copied, setCopied] = React.useState(false);
-  const [copiedCode, setCopiedCode] = React.useState(false);
   const [code, setCode] = React.useState("");
   const [codeError, setCodeError] = React.useState<string | null>(null);
-  const [showCodeBox, setShowCodeBox] = React.useState(revoked);
+  const [showCodeBox, setShowCodeBox] = React.useState(false);
   const [redeemBusy, setRedeemBusy] = React.useState(false);
 
   React.useEffect(() => {
@@ -38,8 +35,7 @@ export default function PendingApprovalPage() {
         "طلب إعادة تفعيل حساب موقوف - تطبيق الفرز",
         user.fullName ? `الاسم: ${user.fullName}` : null,
         `الحساب: ${user.identifier}`,
-        `الرمز الشخصي: ${personalCode}`,
-        "الرجاء إعادة تفعيل حسابي بعد الإيقاف.",
+        "الرجاء إعادة تفعيل حسابي من إدارة التحكم أو إرسال رمز تفعيل.",
       ]
         .filter(Boolean)
         .join("\n");
@@ -50,7 +46,6 @@ export default function PendingApprovalPage() {
       `الحساب: ${user.identifier}`,
       `نوع الحساب: ${typeLabel}`,
       user.city ? `المدينة: ${user.city}` : null,
-      `الرمز الشخصي: ${personalCode}`,
       `تاريخ الطلب: ${new Date(user.createdAt).toLocaleString("ar-SA")}`,
       "الرجاء الموافقة على الطلب ومنحي صلاحية استخدام التطبيق.",
     ]
@@ -72,17 +67,10 @@ export default function PendingApprovalPage() {
     setTimeout(() => setCopied(false), 1500);
   }
 
-  function handleCopyCode() {
-    if (!personalCode) return;
-    navigator.clipboard?.writeText(personalCode).catch(() => {});
-    setCopiedCode(true);
-    setTimeout(() => setCopiedCode(false), 1500);
-  }
-
   async function handleRedeemCode() {
     setCodeError(null);
     if (!code.trim()) {
-      setCodeError("يرجى إدخال رمز التفعيل");
+      setCodeError("يرجى إدخال رمز التفعيل الذي أرسله المالك");
       return;
     }
     setRedeemBusy(true);
@@ -120,33 +108,12 @@ export default function PendingApprovalPage() {
       </h1>
       <p className="text-sm leading-6 text-muted-foreground">
         {revoked
-          ? "أوقف مالك التطبيق صلاحيتك. تواصل عبر واتساب لإعادة التفعيل، أو أدخل رمزك الشخصي أدناه بعد موافقة المالك."
-          : "مرحبًا بك! يتطلب استخدام التطبيق الحصول على إذن مصرَّح من الإدارة. تواصل عبر واتساب أو الاتصال، وستدخل تلقائيًا فور الموافقة."}
+          ? "أوقف مالك التطبيق صلاحيتك. لا يُعاد التفعيل تلقائيًا — ينتظر موافقة المالك من إدارة التحكم أو رمز تفعيل يرسله المالك لك."
+          : "مرحبًا بك! يتطلب استخدام التطبيق إذنًا من الإدارة. تواصل عبر واتساب، وستدخل فور موافقة المالك أو إدخال رمز يرسله هو."}
       </p>
       <p className="text-xs text-muted-foreground" dir="ltr">
         {user?.identifier}
       </p>
-
-      {personalCode && (
-        <Card className="w-full border-primary/25 bg-primary/5">
-          <CardContent className="flex items-center justify-between gap-2 pt-4">
-            <button
-              type="button"
-              onClick={handleCopyCode}
-              className="text-muted-foreground hover:text-primary"
-              aria-label="نسخ الرمز"
-            >
-              {copiedCode ? <Check className="h-4 w-4 text-primary" /> : <Copy className="h-4 w-4" />}
-            </button>
-            <div className="text-right">
-              <p className="text-[11px] text-muted-foreground">رمزك الشخصي للتفعيل</p>
-              <p className="text-base font-black text-primary" dir="ltr">
-                {personalCode}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       {primaryPhone && (
         <Card className="w-full border-emerald-500/30 bg-secondary/40">
@@ -186,13 +153,13 @@ export default function PendingApprovalPage() {
         className="flex items-center gap-1.5 text-xs font-bold text-muted-foreground"
       >
         <KeyRound className="h-3.5 w-3.5" />
-        {showCodeBox ? "إخفاء إدخال الرمز" : "إدخال رمز التفعيل / الرمز الشخصي"}
+        {showCodeBox ? "إخفاء إدخال الرمز" : "إدخال رمز التفعيل من المالك"}
       </button>
 
       {showCodeBox && (
         <div className="flex w-full flex-col gap-2">
           <Input
-            placeholder="TFZ-U-...... أو رمز المالك"
+            placeholder="الصق الرمز الذي أرسله المالك"
             value={code}
             onChange={(e) => setCode(e.target.value)}
             className="text-center"

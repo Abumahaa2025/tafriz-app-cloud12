@@ -152,9 +152,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .replace(/\s+/g, "");
       if (!raw) return res.status(400).json({ error: "missing_code" });
 
-      // رمز شخصي ثابت للمستخدم: TFZ-U-XXXXXX
+      // رمز شخصي ثابت: لا يُفعّل الحساب الموقوف تلقائيًا — يحتاج موافقة المالك أو رمز يولّده المالك
       const normalizedPersonal = raw.replace(/[\s_]+/g, "-");
       if (/^TFZ-U-\d{6}$/.test(normalizedPersonal)) {
+        if (profile?.status === "revoked") {
+          return res.status(403).json({
+            error: "personal_code_blocked_after_revoke",
+            message:
+              "الحساب موقوف. إعادة التفعيل فقط من المالك عبر إدارة التحكم أو برمز تفعيل يرسله المالك.",
+          });
+        }
         let h = 2166136261;
         const id = user.id;
         for (let i = 0; i < id.length; i++) {
@@ -175,10 +182,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             package_expires_at: expires.toISOString(),
           })
           .eq("id", user.id)
+          .neq("status", "revoked")
           .select("id,status")
           .maybeSingle();
         if (upErr || !updated) {
-          return res.status(400).json({ error: upErr?.message || "profile_update_failed" });
+          return res.status(400).json({
+            error: upErr?.message || "profile_update_failed",
+            message:
+              "تعذّر التفعيل بالرمز الشخصي. إن كان الحساب موقوفًا فالتفعيل من المالك فقط.",
+          });
         }
         if (updated.status !== "approved") {
           return res.status(400).json({
