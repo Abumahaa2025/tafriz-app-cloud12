@@ -283,31 +283,32 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
     }));
   }
 
-  function buildResultsExcelFile(): File | null {
+  function buildSharePayload(): {
+    xlsxFile: File;
+    plainCsvFile: File;
+    csvText: string;
+  } | null {
     const table = resultsTableRows();
     if (!table) return null;
+
     const ws = XLSX.utils.json_to_sheet(table);
     ws["!cols"] = [{ wch: 6 }, { wch: 18 }, { wch: 36 }, { wch: 40 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "نتائج الفرز");
     const bytes = XLSX.write(wb, { bookType: "xlsx", type: "array" }) as number[];
+    const csvBody = XLSX.utils.sheet_to_csv(ws);
+    const csvText = "\uFEFF" + csvBody;
     const stamp = new Date().toISOString().slice(0, 10);
-    return new File([new Uint8Array(bytes)], `نتائج-الفرز-${stamp}.xlsx`, {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    // أسماء ASCII + text/plain: أندرويد/TWA يفتح قائمة التطبيقات بهذا الشكل بثبات
+    const xlsxFile = new File(
+      [new Uint8Array(bytes)],
+      `tafriz-results-${stamp}.xlsx`,
+      { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+    );
+    const plainCsvFile = new File([csvText], `tafriz-results-${stamp}.csv`, {
+      type: "text/plain",
     });
-  }
-
-  /** CSV يفتح قائمة مشاركة أندرويد بثبات، ويفتح كجدول في Sheets/Excel */
-  function buildResultsCsvFile(): File | null {
-    const table = resultsTableRows();
-    if (!table) return null;
-    const ws = XLSX.utils.json_to_sheet(table);
-    const csv = XLSX.utils.sheet_to_csv(ws);
-    const stamp = new Date().toISOString().slice(0, 10);
-    // BOM عشان العربية تظهر صحيحة في Excel
-    return new File(["\uFEFF" + csv], `نتائج-الفرز-${stamp}.csv`, {
-      type: "text/csv;charset=utf-8",
-    });
+    return { xlsxFile, plainCsvFile, csvText };
   }
 
   async function shareExcelNative(file: File, title: string): Promise<boolean> {
@@ -334,49 +335,52 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
     }
   }
 
-  async function tryShareFiles(files: File[], title: string): Promise<"shared" | "abort" | "fail"> {
-    const nav = navigator as NavShare;
-    if (!nav.share) return "fail";
-    for (const file of files) {
-      try {
-        // لا نوقف المحاولة لو canShare رفض النوع — بعض أجهزة أندرويد ترفض xlsx ثم تقبل csv
-        if (nav.canShare && !nav.canShare({ files: [file] })) continue;
-        await nav.share({ files: [file], title });
-        return "shared";
-      } catch (err) {
-        if (err instanceof Error && err.name === "AbortError") return "abort";
-      }
-    }
-    // محاولة أخيرة بدون فحص canShare (إيماءة المستخدم ما زالت قريبة)
-    try {
-      await nav.share({ files: [files[0]], title });
-      return "shared";
-    } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") return "abort";
-      return "fail";
-    }
-  }
-
   async function handleShareResults() {
-    // مهم: بناء الملفات بشكل متزامن ثم استدعاء share فورًا دون await سابق
-    // حتى لا تضيع "إيماءة المستخدم" ويفشل فتح قائمة التطبيقات
-    const xlsxFile = buildResultsExcelFile();
-    const csvFile = buildResultsCsvFile();
-    if (!xlsxFile || !csvFile) {
+    // بناء متزامن ثم share فورًا — أي await قبل share يقتل إيماءة الضغط على أندرويد
+    const payload = buildSharePayload();
+    if (!payload) {
       flashNotice("لا توجد نتائج لمشاركتها");
       return;
     }
+    const { xlsxFile, plainCsvFile, csvText } = payload;
     const title = "نتائج الفرز";
+    const nav = navigator as NavShare;
+
+    if (nav.share) {
+      // 1) ملف CSV كـ text/plain (الأكثر قبولًا في قائمة مشاركة أندرويد)
+      // 2) ثم Excel
+      // 3) ثم نص CSV — يفتح التطبيقات حتى لو الملفات مرفوضة
+      const fileAttempts: File[] = [plainCsvFile, xlsxFile];
+      for (const file of fileAttempts) {
+        try {
+          const data = { files: [file], title };
+          if (nav.canShare && !nav.canShare(data)) continue;
+          await nav.share(data);
+          return;
+        } catch (err) {
+          if (err instanceof Error && err.name === "AbortError") return;
+        }
+      }
+      for (const file of fileAttempts) {
+        try {
+          await nav.share({ files: [file], title });
+          return;
+        } catch (err) {
+          if (err instanceof Error && err.name === "AbortError") return;
+        }
+      }
+      try {
+        await nav.share({ title, text: csvText });
+        return;
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") return;
+      }
+    }
 
     if (Capacitor.isNativePlatform()) {
       if (await shareExcelNative(xlsxFile, title)) return;
     }
 
-    // على الويب/TWA: csv أولًا لأنه مدعوم في قائمة مشاركة أندرويد، ثم xlsx
-    const shareResult = await tryShareFiles([csvFile, xlsxFile], title);
-    if (shareResult === "shared" || shareResult === "abort") return;
-
-    // احتياطي أخير فقط إذا نظام الجهاز لا يدعم مشاركة الملفات
     const url = URL.createObjectURL(xlsxFile);
     const a = document.createElement("a");
     a.href = url;
