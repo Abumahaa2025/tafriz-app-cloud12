@@ -191,18 +191,22 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
     }
     const handle = startPlateSpeech({
       onFinal: (transcript, candidates) => {
-        // جرّب كل المرشحات من نفس الأمر — لا نوقف إلا عند إيقاف يدوي
         for (const c of candidates) {
           if (c && tryLookup(c)) {
             setSpeechError(null);
             setInterim("");
+            // بعد ظهور النتيجة: إيقاف الأمر الصوتي فورًا
+            speechRef.current?.stop();
+            speechRef.current = null;
+            setChecking(false);
             return;
           }
         }
-        // مرشح ضعيف/فارغ: نبقي السماع ونظهر تلميحًا قصيرًا فقط
+        // لم تظهر نتيجة: إشعار توجيهي مع استمرار السماع حتى يجد أو يوقف المستخدم
         if (candidates.some((c) => c && c.length >= 2) || transcript.trim().length >= 2) {
-          setSpeechError("لم يُعثر — أعد نطق اللوحة بوضوح (رقم أو حرف)");
-          window.setTimeout(() => setSpeechError((prev) => (prev?.startsWith("لم يُعثر") ? null : prev)), 2200);
+          const tip = "حاول إدخال أحرف منفصلة أو رقم";
+          setSpeechError(tip);
+          window.setTimeout(() => setSpeechError((prev) => (prev === tip ? null : prev)), 3200);
         }
       },
       onInterim: setInterim,
@@ -408,10 +412,17 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
         <p className="text-center text-xs text-muted-foreground">
           {interim
             ? "يسمع: " + interim
-            : "جاري التشيك — انطق اللوحة بوضوح، ويستمر السماع حتى تضغط إيقاف"}
+            : "جاري التشيك — انطق اللوحة بوضوح (يتوقف تلقائيًا عند ظهور النتيجة)"}
         </p>
       )}
-      {speechError && <p className="text-center text-xs text-destructive">{speechError}</p>}
+      {speechError && (
+        <div
+          role="status"
+          className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-center text-sm font-medium text-amber-900 dark:text-amber-100"
+        >
+          {speechError}
+        </div>
+      )}
 
       <div className="flex gap-2">
         <Input
