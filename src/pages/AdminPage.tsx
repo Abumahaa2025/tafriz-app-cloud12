@@ -221,12 +221,30 @@ export default function AdminPage({ onBack }: { onBack?: () => void }) {
                       const nextOpen = open ? null : thread.key;
                       setOpenThreadId(nextOpen);
                       if (!open) {
-                        for (const m of thread.messages) {
-                          if (!m.fromOwner && !m.read) {
-                            await backend.markFeedbackRead(m.id);
+                        // تحديث فوري للواجهة حتى تختفي «ملاحظات جديدة» مباشرة
+                        const unreadIds = thread.messages
+                          .filter((m) => !m.fromOwner && !m.read)
+                          .map((m) => m.id);
+                        if (unreadIds.length > 0) {
+                          setFeedback((prev) =>
+                            prev.map((m) =>
+                              unreadIds.includes(m.id) ||
+                              (!m.fromOwner && m.identifier === thread.identifier)
+                                ? { ...m, read: true }
+                                : m
+                            )
+                          );
+                          try {
+                            await backend.markOwnerConversationRead({
+                              ids: unreadIds,
+                              identifier: thread.identifier,
+                              threadId: thread.threadId,
+                            });
+                          } catch {
+                            // ignore — الحالة المحلية محدّثة
                           }
                         }
-                        refresh();
+                        await refresh();
                       }
                     }}
                   >

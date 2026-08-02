@@ -121,6 +121,12 @@ export interface Backend {
   /** رسائل المستخدم الحالي فقط (لعرض محادثته مع الإدارة) */
   listMyFeedback(): Promise<FeedbackItem[]>;
   markFeedbackRead(id: string): Promise<void>;
+  /** المالك يعلّم محادثة مستخدم كمقروءة دفعة واحدة */
+  markOwnerConversationRead(opts: {
+    ids?: string[];
+    identifier?: string;
+    threadId?: string;
+  }): Promise<void>;
   /** المستخدم يعلّم ردود المالك في الخيط كمقروءة */
   markFeedbackThreadReadByUser(threadId: string): Promise<void>;
 

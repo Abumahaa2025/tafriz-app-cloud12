@@ -1,17 +1,26 @@
 import * as React from "react";
 import { useAuth } from "@/context/AuthContext";
 import { backend } from "@/lib/backend";
+import { OWNER_IDENTIFIER } from "@/lib/owner-config";
 import {
   ensureNotificationPermission,
   notifyOwnerNewFeedback,
   notifyUserAdminReply,
 } from "@/lib/feedback-notify";
 
+function isOwnerAccount(user: { isOwner?: boolean; identifier?: string } | null): boolean {
+  if (!user) return false;
+  if (user.isOwner) return true;
+  if (OWNER_IDENTIFIER && user.identifier === OWNER_IDENTIFIER) return true;
+  return false;
+}
+
 /**
  * يراقب رسائل التواصل ويُظهر إشعار جوال عند وصول رسالة جديدة.
  */
 export function FeedbackNotifyWatcher() {
   const { user } = useAuth();
+  const owner = isOwnerAccount(user);
 
   React.useEffect(() => {
     if (!user) return;
@@ -24,7 +33,7 @@ export function FeedbackNotifyWatcher() {
 
     const tick = async () => {
       try {
-        if (user.isOwner) {
+        if (owner) {
           const items = await backend.listFeedback();
           if (!cancelled) await notifyOwnerNewFeedback(items);
         } else {
@@ -37,7 +46,8 @@ export function FeedbackNotifyWatcher() {
     };
 
     tick();
-    const interval = setInterval(tick, 20_000);
+    // أسرع قليلًا حتى لا تفوت رسالة والمالك على الشاشة
+    const interval = setInterval(tick, 8_000);
     const onVis = () => {
       if (document.visibilityState === "visible") tick();
     };
@@ -47,7 +57,7 @@ export function FeedbackNotifyWatcher() {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [user?.id, user?.isOwner]);
+  }, [user?.id, owner]);
 
   return null;
 }

@@ -232,6 +232,22 @@ export const localBackend: Backend = {
     );
   },
 
+  async markOwnerConversationRead(opts) {
+    const items = normalizeLocalFeedback(loadLocal<FeedbackItem[]>(FEEDBACK_KEY, []));
+    const idSet = new Set(opts.ids ?? []);
+    saveLocal(
+      FEEDBACK_KEY,
+      items.map((i) => {
+        if (i.fromOwner) return i;
+        const hit =
+          (idSet.size > 0 && idSet.has(i.id)) ||
+          (opts.identifier && i.identifier === opts.identifier) ||
+          (opts.threadId && (i.threadId === opts.threadId || i.id === opts.threadId));
+        return hit ? { ...i, read: true } : i;
+      })
+    );
+  },
+
   async markFeedbackThreadReadByUser(threadId) {
     const items = normalizeLocalFeedback(loadLocal<FeedbackItem[]>(FEEDBACK_KEY, []));
     saveLocal(

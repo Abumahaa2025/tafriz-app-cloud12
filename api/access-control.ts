@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 
-type Action = "approve" | "revoke" | "generateCode" | "redeemCode" | "replyFeedback";
+type Action = "approve" | "revoke" | "generateCode" | "redeemCode" | "replyFeedback" | "markFeedbackRead";
 
 function adminClient(url: string, serviceKey: string) {
   return createClient(url, serviceKey, {
@@ -232,6 +232,50 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .eq("from_owner", false);
 
       return res.status(200).json({ ok: true, threadId: resolvedThreadId });
+    }
+
+    if (action === "markFeedbackRead") {
+      if (!profile?.is_owner) {
+        return res.status(403).json({ error: "owner_only" });
+      }
+      const ids = Array.isArray(req.body?.ids)
+        ? (req.body.ids as unknown[]).map((x) => String(x)).filter(Boolean)
+        : [];
+      const identifier = String(req.body?.identifier || "").trim();
+      const threadId = String(req.body?.threadId || "").trim();
+
+      if (ids.length > 0) {
+        const { error } = await admin
+          .from("feedback")
+          .update({ read: true })
+          .in("id", ids)
+          .eq("from_owner", false);
+        if (error) return res.status(400).json({ error: error.message });
+      }
+      if (identifier) {
+        const { error } = await admin
+          .from("feedback")
+          .update({ read: true })
+          .eq("identifier", identifier)
+          .eq("from_owner", false);
+        if (error) return res.status(400).json({ error: error.message });
+      }
+      if (threadId) {
+        await admin
+          .from("feedback")
+          .update({ read: true })
+          .eq("thread_id", threadId)
+          .eq("from_owner", false);
+        await admin
+          .from("feedback")
+          .update({ read: true })
+          .eq("id", threadId)
+          .eq("from_owner", false);
+      }
+      if (!ids.length && !identifier && !threadId) {
+        return res.status(400).json({ error: "missing_target" });
+      }
+      return res.status(200).json({ ok: true });
     }
 
     return res.status(400).json({ error: "unknown_action" });

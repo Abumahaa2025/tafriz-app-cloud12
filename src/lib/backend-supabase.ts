@@ -354,8 +354,15 @@ export const supabaseBackend: Backend = {
   },
 
   async markFeedbackRead(id) {
-    const { error } = await requireClient().from("feedback").update({ read: true }).eq("id", id);
-    if (error) throw new BackendError("unknown", error.message);
+    await callAccessControl("markFeedbackRead", { ids: [id] });
+  },
+
+  async markOwnerConversationRead(opts) {
+    await callAccessControl("markFeedbackRead", {
+      ids: opts.ids ?? [],
+      identifier: opts.identifier ?? "",
+      threadId: opts.threadId ?? "",
+    });
   },
 
   async markFeedbackThreadReadByUser(threadId) {
