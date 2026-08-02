@@ -39,6 +39,9 @@ export interface UploadSearchHit {
 export interface SortResultRow {
   street: string;
   plate: string;
+  mapUrl?: string | null;
+  lat?: number | null;
+  lng?: number | null;
 }
 
 export interface SortHistoryEntry {

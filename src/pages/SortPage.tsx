@@ -35,6 +35,7 @@ interface PersistedSortState {
   referralSheet: ParsedSheet | null;
   plateColumn: string;
   streetColumn: string;
+  mapColumn: string;
   referralPlateColumn: string;
   result: SortResult | null;
 }
@@ -46,9 +47,19 @@ const EMPTY_STATE: PersistedSortState = {
   referralSheet: null,
   plateColumn: "",
   streetColumn: "",
+  mapColumn: "",
   referralPlateColumn: "",
   result: null,
 };
+
+function guessMapColumn(headers: string[]): string {
+  const keywords = ["خريط", "maps", "map", "gps", "موقع", "رابط", "goo", "إحداث", "coordinates"];
+  for (const keyword of keywords) {
+    const match = headers.find((h) => h.toLowerCase().includes(keyword.toLowerCase()));
+    if (match) return match;
+  }
+  return "";
+}
 
 // تُقرأ مرة واحدة بشكل متزامن (وليس داخل useEffect) حتى لا يحدث فيها سباق
 // مع عملية الحفظ — كانت هذه بالضبط سبب اختفاء البيانات بمجرد الانتقال لتبويب
@@ -77,6 +88,7 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
   const [dataPassword, setDataPassword] = React.useState("");
   const [plateColumn, setPlateColumn] = React.useState<string>(initial.plateColumn);
   const [streetColumn, setStreetColumn] = React.useState<string>(initial.streetColumn);
+  const [mapColumn, setMapColumn] = React.useState<string>(initial.mapColumn ?? "");
 
   // referral file state
   const [referralFile, setReferralFile] = React.useState<File | FileMeta | null>(initial.referralFileMeta);
@@ -114,10 +126,11 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
       referralSheet,
       plateColumn,
       streetColumn,
+      mapColumn,
       referralPlateColumn,
       result,
     });
-  }, [dataFile, dataSheet, referralFile, referralSheet, plateColumn, streetColumn, referralPlateColumn, result]);
+  }, [dataFile, dataSheet, referralFile, referralSheet, plateColumn, streetColumn, mapColumn, referralPlateColumn, result]);
 
   async function handleDataSelect(file: File) {
     setDataFile(file);
@@ -130,6 +143,7 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
       const guessedPlate = guessColumn(parsed.headers, ["لوحة", "اللوحة", "Plate"]);
       setPlateColumn(guessedPlate ?? "");
       setStreetColumn(guessColumn(parsed.headers, ["شارع", "الشارع", "Street"], guessedPlate) ?? "");
+      setMapColumn(guessMapColumn(parsed.headers));
     } catch (err) {
       await backend.logError(
         err instanceof Error ? err.message : "تعذّر قراءة ملف الداتا",
@@ -167,6 +181,7 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
     setDataProgress(null);
     setPlateColumn("");
     setStreetColumn("");
+    setMapColumn("");
     setReferralFile(null);
     setReferralSheet(null);
     setReferralProgress(null);
@@ -178,7 +193,14 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
     if (!dataSheet || !referralSheet || !plateColumn || !streetColumn || !referralPlateColumn) {
       return;
     }
-    const res = runSort(dataSheet, plateColumn, streetColumn, referralSheet, referralPlateColumn);
+    const res = runSort(
+      dataSheet,
+      plateColumn,
+      streetColumn,
+      referralSheet,
+      referralPlateColumn,
+      mapColumn || undefined
+    );
     setResult(res);
     // إظهار النتائج فورًا بعد الفرز (خصوصًا داخل تطبيق أندرويد حيث الشريط السفلي يغطي الجدول)
     requestAnimationFrame(() => {
@@ -372,6 +394,12 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
                 selections={[
                   { label: "عمود رقم اللوحة", value: plateColumn, onChange: setPlateColumn },
                   { label: "عمود الشارع", value: streetColumn, onChange: setStreetColumn },
+                  {
+                    label: "عمود رابط الخريطة (اختياري)",
+                    value: mapColumn,
+                    onChange: setMapColumn,
+                    allowEmpty: true,
+                  },
                 ]}
               />
               {plateColumn && plateColumn === streetColumn && (
@@ -493,7 +521,12 @@ function ColumnPicker({
 }: {
   title: string;
   headers: string[];
-  selections: { label: string; value: string; onChange: (v: string) => void }[];
+  selections: {
+    label: string;
+    value: string;
+    onChange: (v: string) => void;
+    allowEmpty?: boolean;
+  }[];
 }) {
   const [open, setOpen] = React.useState(false);
   return (
@@ -521,6 +554,7 @@ function ColumnPicker({
                 onChange={(e) => sel.onChange(e.target.value)}
                 className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
               >
+                {sel.allowEmpty && <option value="">— بدون —</option>}
                 {headers.map((h) => (
                   <option key={h} value={h}>
                     {h}

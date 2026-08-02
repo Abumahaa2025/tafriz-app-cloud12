@@ -1,9 +1,14 @@
 import { normalizePlate } from "./normalize";
 import { ParsedSheet } from "./xlsx-utils";
+import { coordsFromMapsUrl, findMapsUrlInRow } from "./map-coords";
 
 export interface SortResultRow {
   street: string;
   plate: string;
+  /** رابط Google Maps إن وُجد في صف الداتا */
+  mapUrl?: string | null;
+  lat?: number | null;
+  lng?: number | null;
 }
 
 export interface SortResult {
@@ -21,7 +26,8 @@ export function runSort(
   dataPlateColumn: string,
   dataStreetColumn: string,
   referral: ParsedSheet,
-  referralPlateColumn: string
+  referralPlateColumn: string,
+  dataMapColumn?: string
 ): SortResult {
   const referralPlates = new Set(
     referral.rows
@@ -39,7 +45,15 @@ export function runSort(
     const street = String(row[dataStreetColumn] ?? "");
 
     if (plateNorm.length > 0 && referralPlates.has(plateNorm)) {
-      matchedRows.push({ street, plate: plateRaw });
+      const mapUrl = findMapsUrlInRow(row, dataMapColumn);
+      const coords = mapUrl ? coordsFromMapsUrl(mapUrl) : null;
+      matchedRows.push({
+        street,
+        plate: plateRaw,
+        mapUrl,
+        lat: coords?.lat ?? null,
+        lng: coords?.lng ?? null,
+      });
       distinctMatched.add(plateNorm);
     } else {
       unsortedCount += 1;
