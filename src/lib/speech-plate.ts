@@ -53,10 +53,13 @@ const DIGIT_WORDS: Record<string, string> = {
 const LETTER_WORDS: Record<string, string> = {
   الف: "ا",
   ألف: "ا",
+  الفاء: "ا",
   باء: "ب",
+  بي: "ب",
   تاء: "ت",
   ثاء: "ث",
   جيم: "ج",
+  جي: "ج",
   حاء: "ح",
   خاء: "خ",
   دال: "د",
@@ -64,6 +67,7 @@ const LETTER_WORDS: Record<string, string> = {
   راء: "ر",
   را: "ر",
   زاي: "ز",
+  زين: "ز",
   سين: "س",
   شين: "ش",
   صاد: "ص",
@@ -81,7 +85,84 @@ const LETTER_WORDS: Record<string, string> = {
   هاء: "ه",
   واو: "و",
   ياء: "ي",
+  // أسماء أحرف إنجليزية شائعة من التعرف الصوتي
+  a: "a",
+  ay: "a",
+  aye: "a",
+  ei: "a",
+  b: "b",
+  be: "b",
+  bee: "b",
+  c: "c",
+  see: "c",
+  sea: "c",
+  d: "d",
+  dee: "d",
+  e: "e",
+  ee: "e",
+  f: "f",
+  ef: "f",
+  g: "g",
+  gee: "g",
+  jee: "g",
+  h: "h",
+  aitch: "h",
+  i: "i",
+  eye: "i",
+  j: "j",
+  jay: "j",
+  k: "k",
+  kay: "k",
+  l: "l",
+  el: "l",
+  ell: "l",
+  m: "m",
+  em: "m",
+  n: "n",
+  en: "n",
+  o: "o",
+  oh: "o",
+  p: "p",
+  pee: "p",
+  q: "q",
+  queue: "q",
+  cue: "q",
+  r: "r",
+  ar: "r",
+  are: "r",
+  s: "s",
+  ess: "s",
+  t: "t",
+  tee: "t",
+  u: "u",
+  you: "u",
+  v: "v",
+  vee: "v",
+  w: "w",
+  doubleu: "w",
+  x: "x",
+  ex: "x",
+  y: "y",
+  why: "y",
+  z: "z",
+  zee: "z",
+  zed: "z",
 };
+
+const SKIP_WORDS = new Set(["حرف", "الحرف", "letter", "plates", "plate", "لوحة", "اللوحة"]);
+
+function resolveSpokenPart(part: string): string | null {
+  let p = part.trim();
+  if (!p || SKIP_WORDS.has(p.toLowerCase())) return null;
+  // "الجيم" / "الراء"
+  if (p.startsWith("ال") && p.length > 2) p = p.slice(2);
+  if (DIGIT_WORDS[p] != null) return DIGIT_WORDS[p];
+  if (LETTER_WORDS[p] != null) return LETTER_WORDS[p];
+  const lower = p.toLowerCase();
+  if (LETTER_WORDS[lower] != null) return LETTER_WORDS[lower];
+  if (/^[\u0600-\u06FFa-zA-Z0-9]+$/.test(p)) return p;
+  return null;
+}
 
 export function speechToPlateCandidate(raw: string): string {
   let text = String(raw ?? "").trim();
@@ -91,15 +172,8 @@ export function speechToPlateCandidate(raw: string): string {
   const parts = text.split(/[\s,./\\|_-]+/).map((p) => p.trim()).filter(Boolean);
   let out = "";
   for (const part of parts) {
-    if (DIGIT_WORDS[part] != null) {
-      out += DIGIT_WORDS[part];
-      continue;
-    }
-    if (LETTER_WORDS[part] != null) {
-      out += LETTER_WORDS[part];
-      continue;
-    }
-    if (/^[\u0600-\u06FFa-zA-Z0-9]+$/.test(part)) out += part;
+    const resolved = resolveSpokenPart(part);
+    if (resolved != null) out += resolved;
   }
   if (!normalizePlate(out)) {
     out = text.replace(/[^\u0600-\u06FF0-9a-zA-Z]/g, "");
@@ -126,7 +200,7 @@ export function startPlateSpeech(opts: {
   rec.lang = "ar-SA";
   rec.continuous = true;
   rec.interimResults = true;
-  rec.maxAlternatives = 1;
+  rec.maxAlternatives = 3;
   let stopped = false;
   rec.onresult = (ev) => {
     let interim = "";

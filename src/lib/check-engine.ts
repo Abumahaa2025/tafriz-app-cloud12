@@ -1,5 +1,6 @@
 import { normalizePlate } from "./normalize";
 import { extractMapsUrl, findMapsUrlInRow } from "./map-coords";
+import { extractPlateLetters, normalizeSearchText } from "./search-text";
 import { ParsedSheet } from "./xlsx-utils";
 
 export interface CheckSheetRow {
@@ -83,10 +84,40 @@ export function lookupPlate(
   if (!norm) return null;
   const exact = index.get(norm);
   if (exact) return exact;
+
+  const qSearch = normalizeSearchText(norm).replace(/\s/g, "");
+  if (!qSearch) return null;
+
+  const lettersOnly = qSearch.replace(/[0-9]/g, "");
+  const digitsOnly = qSearch.replace(/[^0-9]/g, "");
+
+  // حرف أو حروف فقط (عربي/إنجليزي) — مثل البحث اليدوي بحرف اللوحة
+  if (lettersOnly.length > 0 && digitsOnly.length === 0) {
+    for (const [, row] of index) {
+      const p = normalizeSearchText(row.plate).replace(/\s/g, "");
+      if (lettersOnly.length === 1) {
+        if (extractPlateLetters(normalizeSearchText(row.plate)).includes(lettersOnly)) return row;
+        if (p.includes(lettersOnly)) return row;
+      } else if (p.includes(lettersOnly)) {
+        return row;
+      }
+    }
+    return null;
+  }
+
   if (norm.length >= 4) {
     for (const [key, row] of index) {
       if (key.includes(norm) || norm.includes(key)) return row;
     }
   }
+
+  // رقم + حرف قصير (مثل 7ج / ج522)
+  if (lettersOnly.length > 0 && qSearch.length >= 2) {
+    for (const [, row] of index) {
+      const p = normalizeSearchText(row.plate).replace(/\s/g, "");
+      if (p.includes(qSearch)) return row;
+    }
+  }
+
   return null;
 }
