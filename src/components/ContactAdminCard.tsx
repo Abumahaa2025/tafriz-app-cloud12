@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ChevronDown, MessageCircle, Phone, Send } from "lucide-react";
+import { ChevronDown, MessageCircle, Send } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -95,8 +95,8 @@ export function ContactAdminCard() {
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <p className="text-xs text-muted-foreground">
-          تواصل مع إدارة التطبيق مباشرة عبر واتساب أو الاتصال، أو أرسل رسالتك
-          من هنا وتوصل للمالك مباشرة داخل التطبيق — ويمكنك متابعة الردود هنا.
+          تواصل مع الإدارة عبر واتساب أو مباشرة من داخل التطبيق — أرسل طلب إذن أو رمز
+          تفعيل أو أي رسالة، وتصل للمالك في إدارة التحكم.
         </p>
 
         <div className="flex flex-col gap-2">
@@ -112,18 +112,11 @@ export function ContactAdminCard() {
                 <MessageCircle className="h-4 w-4" />
                 واتساب
               </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                className="flex-1"
-                onClick={() => (window.location.href = `tel:+${p.phone}`)}
-              >
-                <Phone className="h-4 w-4" />
-                اتصال
-              </Button>
             </div>
           ))}
         </div>
+
+        <p className="text-[11px] font-bold text-muted-foreground">التواصل عبر التطبيق</p>
 
         <div className="flex items-center gap-2">
           <Input

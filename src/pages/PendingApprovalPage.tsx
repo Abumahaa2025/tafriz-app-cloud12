@@ -1,11 +1,22 @@
 import * as React from "react";
-import { ShieldCheck, Ban, MessageCircle, Phone, Copy, Check, KeyRound } from "lucide-react";
+import {
+  ShieldCheck,
+  Ban,
+  MessageCircle,
+  Copy,
+  Check,
+  KeyRound,
+  Send,
+  AppWindow,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/context/AuthContext";
 import { getSupportPhones } from "@/lib/support-contact";
 import { backend } from "@/lib/backend";
+import { FeedbackItem } from "@/lib/backend-types";
+import { ensureNotificationPermission } from "@/lib/feedback-notify";
 
 export default function PendingApprovalPage() {
   const { user, signOut, refresh } = useAuth();
@@ -18,14 +29,34 @@ export default function PendingApprovalPage() {
   const [showCodeBox, setShowCodeBox] = React.useState(false);
   const [redeemBusy, setRedeemBusy] = React.useState(false);
 
+  const [showInApp, setShowInApp] = React.useState(true);
+  const [appMessage, setAppMessage] = React.useState("");
+  const [sendBusy, setSendBusy] = React.useState(false);
+  const [sendNotice, setSendNotice] = React.useState<string | null>(null);
+  const [messages, setMessages] = React.useState<FeedbackItem[]>([]);
+  const [threadId, setThreadId] = React.useState<string | undefined>(undefined);
+
+  const refreshChat = React.useCallback(async () => {
+    try {
+      const items = await backend.listMyFeedback();
+      const sorted = [...items].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      setMessages(sorted);
+      if (sorted[0]?.threadId) setThreadId(sorted[0].threadId);
+    } catch {
+      // ignore — قد لا تكون الشبكة جاهزة
+    }
+  }, []);
+
   React.useEffect(() => {
     const tick = () => {
       refresh().catch(() => {});
+      refreshChat().catch(() => {});
     };
     tick();
+    ensureNotificationPermission().catch(() => {});
     const interval = setInterval(tick, 3000);
     return () => clearInterval(interval);
-  }, [refresh]);
+  }, [refresh, refreshChat]);
 
   function requestMessage() {
     if (!user) return "";
@@ -67,6 +98,58 @@ export default function PendingApprovalPage() {
     setTimeout(() => setCopied(false), 1500);
   }
 
+  async function sendToAdmin(text: string) {
+    if (!user || !text.trim()) return;
+    setSendBusy(true);
+    setSendNotice(null);
+    try {
+      await backend.submitFeedback(user.identifier, text.trim(), threadId);
+      setAppMessage("");
+      setSendNotice("تم إرسال طلبك للإدارة عبر التطبيق ✓");
+      window.setTimeout(() => setSendNotice(null), 2800);
+      await refreshChat();
+    } catch (err) {
+      setSendNotice(err instanceof Error ? err.message : "تعذّر إرسال الرسالة");
+    } finally {
+      setSendBusy(false);
+    }
+  }
+
+  function quickPermissionRequest() {
+    if (!user) return "";
+    if (revoked) {
+      return [
+        "طلب إعادة تفعيل من التطبيق",
+        user.fullName ? `الاسم: ${user.fullName}` : null,
+        `الحساب: ${user.identifier}`,
+        "أرجو إعادة تفعيل حسابي أو إرسال رمز تفعيل.",
+      ]
+        .filter(Boolean)
+        .join("\n");
+    }
+    return [
+      "طلب إذن استخدام من التطبيق",
+      user.fullName ? `الاسم: ${user.fullName}` : null,
+      `الحساب: ${user.identifier}`,
+      user.city ? `المدينة: ${user.city}` : null,
+      "أرجو الموافقة على استخدام التطبيق.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  function quickCodeRequest() {
+    if (!user) return "";
+    return [
+      "طلب رمز تفعيل من التطبيق",
+      user.fullName ? `الاسم: ${user.fullName}` : null,
+      `الحساب: ${user.identifier}`,
+      revoked ? "الحالة: موقوف — أرجو إرسال رمز تفعيل لإعادة الاشتراك." : "أرجو إرسال رمز تفعيل لتفعيل الحساب.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
   async function handleRedeemCode() {
     setCodeError(null);
     if (!code.trim()) {
@@ -89,7 +172,7 @@ export default function PendingApprovalPage() {
   }
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
+    <div className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-4 px-6 py-10 text-center">
       <div
         className={
           "flex h-16 w-16 items-center justify-center rounded-full " +
@@ -108,8 +191,8 @@ export default function PendingApprovalPage() {
       </h1>
       <p className="text-sm leading-6 text-muted-foreground">
         {revoked
-          ? "أوقف مالك التطبيق صلاحيتك. لا يُعاد التفعيل تلقائيًا — ينتظر موافقة المالك من إدارة التحكم أو رمز تفعيل يرسله المالك لك."
-          : "مرحبًا بك! يتطلب استخدام التطبيق إذنًا من الإدارة. تواصل عبر واتساب، وستدخل فور موافقة المالك أو إدخال رمز يرسله هو."}
+          ? "يمكنك طلب إعادة التفعيل أو رمز تفعيل عبر واتساب أو مباشرة من داخل التطبيق."
+          : "اختر طريقة التواصل: واتساب أو رسالة مباشرة داخل التطبيق (طلب إذن، رمز تفعيل، أو أي طلب للإدارة)."}
       </p>
       <p className="text-xs text-muted-foreground" dir="ltr">
         {user?.identifier}
@@ -122,7 +205,7 @@ export default function PendingApprovalPage() {
               {copied ? <Check className="h-4 w-4 text-primary" /> : <Copy className="h-4 w-4" />}
             </button>
             <div className="text-right">
-              <p className="text-[11px] text-muted-foreground">رقم إدارة التطبيق والمالك</p>
+              <p className="text-[11px] text-muted-foreground">رقم واتساب الإدارة</p>
               <p className="text-base font-bold text-primary" dir="ltr">
                 +{primaryPhone}
               </p>
@@ -134,19 +217,90 @@ export default function PendingApprovalPage() {
       <div className="flex w-full flex-col gap-2">
         <Button className="w-full bg-[#25D366] text-white hover:bg-[#25D366]/90" size="lg" onClick={handleWhatsApp}>
           <MessageCircle className="h-5 w-5" />
-          {revoked ? "واتساب لإعادة التفعيل" : "التواصل عبر الواتساب (طلب الإذن)"}
+          التواصل عبر الواتساب
         </Button>
-        {primaryPhone && (
-          <Button
-            variant="outline"
-            size="lg"
-            onClick={() => (window.location.href = `tel:+${primaryPhone}`)}
-          >
-            <Phone className="h-4 w-4" />
-            الاتصال بالإدارة هاتفيًا
-          </Button>
-        )}
+        <Button
+          variant={showInApp ? "default" : "outline"}
+          size="lg"
+          className="w-full"
+          onClick={() => setShowInApp((v) => !v)}
+        >
+          <AppWindow className="h-5 w-5" />
+          التواصل مع الإدارة عبر التطبيق
+        </Button>
       </div>
+
+      {showInApp && (
+        <Card className="w-full text-right">
+          <CardContent className="flex flex-col gap-3 pt-4">
+            <p className="text-xs text-muted-foreground">
+              أرسل طلبك مباشرة للمالك داخل التطبيق — يصل إلى «إدارة التحكم ▸ الملاحظات».
+            </p>
+
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={sendBusy}
+                onClick={() => sendToAdmin(quickPermissionRequest())}
+              >
+                {revoked ? "طلب إعادة تفعيل" : "طلب إذن استخدام"}
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={sendBusy}
+                onClick={() => sendToAdmin(quickCodeRequest())}
+              >
+                طلب رمز تفعيل
+              </Button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Input
+                placeholder="اكتب أي طلب للإدارة..."
+                value={appMessage}
+                onChange={(e) => setAppMessage(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void sendToAdmin(appMessage);
+                }}
+                className="text-right"
+              />
+              <Button
+                size="icon"
+                disabled={sendBusy || !appMessage.trim()}
+                onClick={() => void sendToAdmin(appMessage)}
+              >
+                <Send className="h-4 w-4" />
+              </Button>
+            </div>
+
+            {sendNotice && (
+              <p className="text-center text-xs font-bold text-primary">{sendNotice}</p>
+            )}
+
+            {messages.length > 0 && (
+              <div className="flex max-h-52 flex-col gap-2 overflow-y-auto rounded-xl border border-border p-2">
+                <p className="text-[11px] font-bold text-muted-foreground">محادثتك مع الإدارة</p>
+                {messages.map((m) => (
+                  <div
+                    key={m.id}
+                    className={
+                      "rounded-lg px-2 py-1.5 text-sm " +
+                      (m.fromOwner ? "bg-secondary/60" : "bg-primary/10")
+                    }
+                  >
+                    <p className="text-[10px] font-bold text-muted-foreground">
+                      {m.fromOwner ? "الإدارة" : "أنت"} · {new Date(m.createdAt).toLocaleString("ar-SA")}
+                    </p>
+                    <p className="whitespace-pre-wrap">{m.message}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <button
         onClick={() => setShowCodeBox((v) => !v)}
