@@ -12,6 +12,7 @@ import {
   Download,
   ExternalLink,
   FileSpreadsheet,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -58,6 +59,7 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
   const [interim, setInterim] = React.useState("");
   const [speechError, setSpeechError] = React.useState<string | null>(null);
   const [found, setFound] = React.useState<CheckSheetRow | null>(null);
+  const [detailOpen, setDetailOpen] = React.useState(false);
   const [manualPlate, setManualPlate] = React.useState("");
   const [hitsLog, setHitsLog] = React.useState<{ plate: string; at: string }[]>([]);
   const speechRef = React.useRef<{ stop: () => void } | null>(null);
@@ -158,15 +160,26 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
     const hit = lookupPlate(index, raw);
     if (!hit) return false;
     setFound(hit);
+    setDetailOpen(true);
     setHitsLog((prev) =>
       [{ plate: hit.plate, at: new Date().toLocaleTimeString("ar-SA") }, ...prev].slice(0, 40)
     );
     return true;
   }
 
+  function openFoundDetails(row: CheckSheetRow) {
+    setFound(row);
+    setDetailOpen(true);
+  }
+
+  function closeDetails() {
+    setDetailOpen(false);
+  }
+
   function startChecking() {
     setSpeechError(null);
     setFound(null);
+    setDetailOpen(false);
     if (!checkData?.rows.length) {
       setSpeechError("ارفع ملف التشيك أولًا");
       return;
@@ -179,6 +192,8 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
     const handle = startPlateSpeech({
       onFinal: (_t, candidate) => {
         if (candidate) tryLookup(candidate);
+        // بعد انتهاء الأمر الصوتي يتوقف التشيك تلقائيًا
+        stopChecking();
       },
       onInterim: setInterim,
       onError: setSpeechError,
@@ -293,16 +308,68 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
       {found && (
         <button
           type="button"
-          onClick={() => setFound(null)}
+          onClick={() => setDetailOpen(true)}
           className="rounded-2xl border border-primary/30 bg-primary/15 px-4 py-6 text-center"
         >
           <p className="text-2xl font-black">{found.plate}</p>
-          <p className="mt-2 inline-block rounded-full bg-background px-3 py-1 text-xs font-bold">
-            {checking ? "جاري التشيك" : "تم إيقاف التشيك"}
+          <p className="mt-2 inline-block rounded-full bg-background px-3 py-1 text-xs font-bold text-primary">
+            موجود في الشيت
           </p>
-          <p className="mt-3 text-sm font-bold text-primary">موجود في الشيت — اضغط للإغلاق</p>
-          {found.gps && <p className="mt-2 break-all text-xs text-muted-foreground">{found.gps}</p>}
+          <p className="mt-3 text-sm font-bold text-muted-foreground">اضغط لعرض التفاصيل</p>
         </button>
+      )}
+
+      {detailOpen && found && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/45 p-4 sm:items-center"
+          onClick={closeDetails}
+        >
+          <div
+            className="relative w-full max-w-sm rounded-2xl border border-border bg-background p-4 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="تفاصيل التشيك"
+          >
+            <button
+              type="button"
+              onClick={closeDetails}
+              className="absolute left-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-secondary text-muted-foreground"
+              aria-label="إغلاق"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            <div className="flex flex-col gap-3 pt-2 text-right">
+              <p className="text-xs font-bold text-primary">تفاصيل التشيك</p>
+              <p className="text-2xl font-black">{found.plate}</p>
+              <p className="inline-flex w-fit self-end rounded-full bg-primary/15 px-3 py-1 text-xs font-bold text-primary">
+                موجود في الشيت
+              </p>
+              {found.gps ? (
+                <div className="rounded-xl bg-secondary/40 px-3 py-2">
+                  <p className="text-[11px] font-bold text-muted-foreground">GPS / الموقع</p>
+                  <p className="break-all text-sm">{found.gps}</p>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">لا يوجد موقع محفوظ لهذه اللوحة</p>
+              )}
+              {(found.mapUrl || found.gps) && (
+                <Button
+                  className="w-full"
+                  onClick={() =>
+                    window.open(
+                      googleMapsOpenUrl({ mapUrl: found.mapUrl, query: found.gps || found.plate }),
+                      "_blank"
+                    )
+                  }
+                >
+                  <ExternalLink className="h-4 w-4" />
+                  فتح الموقع في الخرائط
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       <div className="flex items-center gap-2">
@@ -372,7 +439,7 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
             </div>
             {previewRows.map((row, i) => (
               <div key={row.plateNorm + "-" + i} className="grid grid-cols-[1fr_1.2fr] gap-2 text-xs">
-                <button type="button" className="text-right font-bold" onClick={() => setFound(row)}>
+                <button type="button" className="text-right font-bold" onClick={() => openFoundDetails(row)}>
                   {row.plate}
                 </button>
                 <div className="flex items-center justify-end gap-1 text-muted-foreground">
@@ -403,10 +470,18 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
             آخر اللوحات الموجودة ({hitsLog.length})
           </p>
           {hitsLog.slice(0, 8).map((h, i) => (
-            <p key={h.plate + "-" + i} className="text-xs">
-              <span className="font-bold">{h.plate}</span>
+            <button
+              key={h.plate + "-" + i}
+              type="button"
+              className="text-right text-xs"
+              onClick={() => {
+                const row = lookupPlate(index, h.plate);
+                if (row) openFoundDetails(row);
+              }}
+            >
+              <span className="font-bold text-primary">{h.plate}</span>
               <span className="text-muted-foreground"> · {h.at}</span>
-            </p>
+            </button>
           ))}
         </div>
       )}
