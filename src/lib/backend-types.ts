@@ -137,8 +137,8 @@ export interface Backend {
   resolveError(id: string): Promise<void>;
   /** يستدعيها العميل دوريًا أثناء استخدام التطبيق ليعرف المالك من نشِط الآن. */
   touchLastSeen(): Promise<void>;
-  /** يولّد المالك رمز تفعيل يقدر يعطيه لمستخدم مباشرة (بدون انتظار طلب واتساب) */
-  generateActivationCode(): Promise<string>;
+  /** يولّد المالك رمز تفعيل (آليًا أو يدويًا إن مُرّر code) */
+  generateActivationCode(customCode?: string): Promise<string>;
   listActivationCodes(): Promise<ActivationCode[]>;
   /** المستخدم يدخل الرمز فيُفعَّل حسابه فورًا لو الرمز صحيح وما استُخدم قبل */
   redeemActivationCode(code: string): Promise<boolean>;

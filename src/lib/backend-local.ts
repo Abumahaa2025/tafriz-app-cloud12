@@ -315,10 +315,18 @@ export const localBackend: Backend = {
     );
   },
 
-  async generateActivationCode() {
-    // رمز موقّع يتحقق منه جهاز المستخدم بدون مشاركة localStorage بين الجهازين
+  async generateActivationCode(customCode?: string) {
     const codes = loadLocal<ActivationCode[]>(ACTIVATION_CODES_KEY, []);
-    const code = createSignedActivationCode();
+    let code: string;
+    if (customCode?.trim()) {
+      const raw = customCode.trim().toUpperCase().replace(/\s+/g, "");
+      code = raw.startsWith("TFZ-") ? raw : `TFZ-${raw.replace(/^TFZ-?/, "")}`;
+      if (codes.some((c) => c.code === code)) {
+        throw new BackendError("unknown", "هذا الرمز موجود مسبقًا — اختر رمزًا آخر");
+      }
+    } else {
+      code = createSignedActivationCode();
+    }
     codes.push({ code, createdAt: new Date().toISOString(), usedBy: null });
     saveLocal(ACTIVATION_CODES_KEY, codes);
     return code;

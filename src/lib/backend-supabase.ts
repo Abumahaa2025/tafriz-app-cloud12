@@ -456,22 +456,30 @@ export const supabaseBackend: Backend = {
     await db.from("profiles").update({ last_seen_at: new Date().toISOString() }).eq("id", uid);
   },
 
-  async generateActivationCode() {
-    const result = await callAccessControl<{ code: string }>("generateCode", {});
+  async generateActivationCode(customCode?: string) {
+    const result = await callAccessControl<{ code: string }>("generateCode", {
+      code: customCode?.trim() || undefined,
+    });
     return result.code;
   },
 
   async listActivationCodes() {
-    const { data, error } = await requireClient()
-      .from("activation_codes")
-      .select("*")
-      .order("created_at", { ascending: false });
-    if (error) throw new BackendError("unknown", error.message);
-    return (data ?? []).map((r) => ({
-      code: r.code,
-      createdAt: r.created_at,
-      usedBy: r.used_by,
-    })) as ActivationCode[];
+    try {
+      const result = await callAccessControl<{ codes: ActivationCode[] }>("listCodes", {});
+      return result.codes ?? [];
+    } catch {
+      // احتياطي: قراءة مباشرة إن فشل المسار الإداري
+      const { data, error } = await requireClient()
+        .from("activation_codes")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (error) throw new BackendError("unknown", error.message);
+      return (data ?? []).map((r) => ({
+        code: r.code,
+        createdAt: r.created_at,
+        usedBy: r.used_by,
+      })) as ActivationCode[];
+    }
   },
 
   async redeemActivationCode(code) {

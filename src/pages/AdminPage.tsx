@@ -11,6 +11,8 @@ import {
   Phone,
   KeyRound,
   Copy,
+  Wand2,
+  Plus,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -35,6 +37,9 @@ export default function AdminPage({ onBack }: { onBack?: () => void }) {
   const [feedback, setFeedback] = React.useState<FeedbackItem[]>([]);
   const [errors, setErrors] = React.useState<ErrorReportItem[]>([]);
   const [codes, setCodes] = React.useState<ActivationCode[]>([]);
+  const [manualCode, setManualCode] = React.useState("");
+  const [copiedCode, setCopiedCode] = React.useState<string | null>(null);
+  const [codesBusy, setCodesBusy] = React.useState(false);
   const [broadcastText, setBroadcastText] = React.useState("");
   const [phones, setPhones] = React.useState<SupportPhone[]>(getSupportPhones());
   const [replyDrafts, setReplyDrafts] = React.useState<Record<string, string>>({});
@@ -466,39 +471,118 @@ export default function AdminPage({ onBack }: { onBack?: () => void }) {
             <CardContent className="flex items-start gap-2 pt-4 text-xs text-muted-foreground">
               <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
               <span>
-                ولّد رمزًا وأرسله للمستخدم بنفسك (واتساب/اتصال). الحساب الموقوف لا
-                يُفعَّل تلقائيًا — إما زر «تفعيل» هنا أو رمز تولّده وترسله.
+                أنشئ رمزًا آليًا أو أدخله يدويًا، ثم انسخه وأرسله للمستخدم. الحساب
+                الموقوف لا يُفعَّل إلا برمز ترسله أنت أو زر «تفعيل».
               </span>
             </CardContent>
           </Card>
 
           <Button
+            disabled={codesBusy}
             onClick={async () => {
-              await backend.generateActivationCode();
-              refresh();
+              setCodesBusy(true);
+              try {
+                const code = await backend.generateActivationCode();
+                await navigator.clipboard?.writeText(code).catch(() => {});
+                setCopiedCode(code);
+                flashAction(`تم توليد ونسخ الرمز: ${code}`);
+                await refresh();
+              } catch (err) {
+                flashAction(err instanceof Error ? err.message : "تعذّر التوليد الآلي");
+              } finally {
+                setCodesBusy(false);
+              }
             }}
           >
-            <KeyRound className="h-4 w-4" />
-            توليد رمز تفعيل جديد
+            <Wand2 className="h-4 w-4" />
+            توليد آلي + نسخ
           </Button>
+
+          <Card>
+            <CardHeader className="py-3">
+              <CardTitle className="text-sm">إنشاء يدوي</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-2">
+              <Input
+                placeholder="مثال: 582914 أو TFZ-582914"
+                value={manualCode}
+                onChange={(e) => setManualCode(e.target.value)}
+                className="text-center"
+                dir="ltr"
+              />
+              <Button
+                variant="outline"
+                disabled={codesBusy || !manualCode.trim()}
+                onClick={async () => {
+                  setCodesBusy(true);
+                  try {
+                    const code = await backend.generateActivationCode(manualCode.trim());
+                    await navigator.clipboard?.writeText(code).catch(() => {});
+                    setCopiedCode(code);
+                    setManualCode("");
+                    flashAction(`تم إنشاء ونسخ الرمز: ${code}`);
+                    await refresh();
+                  } catch (err) {
+                    flashAction(err instanceof Error ? err.message : "تعذّر الإنشاء اليدوي");
+                  } finally {
+                    setCodesBusy(false);
+                  }
+                }}
+              >
+                <Plus className="h-4 w-4" />
+                إنشاء يدوي + نسخ
+              </Button>
+            </CardContent>
+          </Card>
+
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-bold text-muted-foreground">سجل الرموز ({codes.length})</p>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={async () => {
+                try {
+                  setCodes(await backend.listActivationCodes());
+                  flashAction("تم تحديث قائمة الرموز");
+                } catch (err) {
+                  flashAction(err instanceof Error ? err.message : "تعذّر التحديث");
+                }
+              }}
+            >
+              تحديث القائمة
+            </Button>
+          </div>
 
           {codes.length === 0 && <p className="text-sm text-muted-foreground">لا توجد رموز بعد.</p>}
           {codes.map((c) => (
-            <Card key={c.code}>
-              <CardContent className="flex items-center justify-between pt-4">
-                <Badge variant={c.usedBy ? "secondary" : "default"}>
-                  {c.usedBy ? "مستخدَم" : "متاح"}
-                </Badge>
-                <div className="flex items-center gap-2">
-                  <span className="text-lg font-black" dir="ltr">
+            <Card key={c.code} className={copiedCode === c.code ? "border-primary/50" : undefined}>
+              <CardContent className="flex flex-col gap-2 pt-4">
+                <div className="flex items-center justify-between gap-2">
+                  <Badge variant={c.usedBy ? "secondary" : "default"}>
+                    {c.usedBy ? "مستخدَم" : "متاح"}
+                  </Badge>
+                  <span className="text-[11px] text-muted-foreground">
+                    {c.createdAt ? new Date(c.createdAt).toLocaleString("ar-SA") : ""}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-lg font-black tracking-wide" dir="ltr">
                     {c.code}
                   </span>
-                  <button
-                    onClick={() => navigator.clipboard?.writeText(c.code).catch(() => {})}
-                    className="text-muted-foreground hover:text-primary"
-                  >
-                    <Copy className="h-4 w-4" />
-                  </button>
+                  <div className="flex gap-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={async () => {
+                        await navigator.clipboard?.writeText(c.code).catch(() => {});
+                        setCopiedCode(c.code);
+                        flashAction(`تم نسخ ${c.code}`);
+                      }}
+                    >
+                      {copiedCode === c.code ? <Check className="h-4 w-4 text-primary" /> : <Copy className="h-4 w-4" />}
+                      نسخ
+                    </Button>
+                  </div>
                 </div>
               </CardContent>
             </Card>

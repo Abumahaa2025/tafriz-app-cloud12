@@ -1,7 +1,14 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 
-type Action = "approve" | "revoke" | "generateCode" | "redeemCode" | "replyFeedback" | "markFeedbackRead";
+type Action =
+  | "approve"
+  | "revoke"
+  | "generateCode"
+  | "listCodes"
+  | "redeemCode"
+  | "replyFeedback"
+  | "markFeedbackRead";
 
 function adminClient(url: string, serviceKey: string) {
   return createClient(url, serviceKey, {
@@ -133,8 +140,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!profile?.is_owner) {
         return res.status(403).json({ error: "owner_only" });
       }
+      const customRaw = String(req.body?.code || "")
+        .trim()
+        .toUpperCase()
+        .replace(/\s+/g, "");
+
+      if (customRaw) {
+        if (customRaw.length < 4 || customRaw.length > 24) {
+          return res.status(400).json({
+            error: "invalid_code_length",
+            message: "الرمز اليدوي يجب أن يكون بين 4 و 24 حرفًا",
+          });
+        }
+        if (!/^[A-Z0-9-]+$/.test(customRaw)) {
+          return res.status(400).json({
+            error: "invalid_code_chars",
+            message: "الرمز يقبل حروفًا إنجليزية وأرقامًا وشرطة فقط",
+          });
+        }
+        const code = customRaw.startsWith("TFZ-") ? customRaw : `TFZ-${customRaw.replace(/^TFZ-?/, "")}`;
+        const { error } = await admin.from("activation_codes").insert({ code });
+        if (error) {
+          if (String(error.message || "").toLowerCase().includes("duplicate")) {
+            return res.status(400).json({
+              error: "duplicate_code",
+              message: "هذا الرمز موجود مسبقًا — اختر رمزًا آخر",
+            });
+          }
+          return res.status(400).json({ error: error.message });
+        }
+        return res.status(200).json({ ok: true, code });
+      }
+
       let code = makeCode();
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 8; i++) {
         const { error } = await admin.from("activation_codes").insert({ code });
         if (!error) return res.status(200).json({ ok: true, code });
         if (!String(error.message || "").toLowerCase().includes("duplicate")) {
@@ -143,6 +182,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         code = makeCode();
       }
       return res.status(400).json({ error: "code_collision" });
+    }
+
+    if (action === "listCodes") {
+      if (!profile?.is_owner) {
+        return res.status(403).json({ error: "owner_only" });
+      }
+      const { data, error } = await admin
+        .from("activation_codes")
+        .select("code,created_at,used_by")
+        .order("created_at", { ascending: false })
+        .limit(100);
+      if (error) return res.status(400).json({ error: error.message });
+      return res.status(200).json({
+        ok: true,
+        codes: (data ?? []).map((r) => ({
+          code: r.code,
+          createdAt: r.created_at,
+          usedBy: r.used_by,
+        })),
+      });
     }
 
     if (action === "redeemCode") {

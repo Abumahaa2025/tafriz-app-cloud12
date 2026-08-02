@@ -31,6 +31,34 @@
 
     --radius: 1rem;
   }
+
+  /* ليلي — نفس الهوية (الأخضر) مع خلفية داكنة */
+  .dark {
+    --background: 215 28% 9%;
+    --foreground: 210 20% 96%;
+
+    --card: 215 24% 12%;
+    --card-foreground: 210 20% 96%;
+
+    --primary: 161 85% 38%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 163 28% 16%;
+    --secondary-foreground: 152 60% 85%;
+
+    --muted: 215 20% 16%;
+    --muted-foreground: 215 12% 65%;
+
+    --accent: 163 28% 16%;
+    --accent-foreground: 152 60% 85%;
+
+    --destructive: 0 72% 48%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 215 18% 22%;
+    --input: 215 18% 22%;
+    --ring: 161 85% 38%;
+  }
 }
 
 @layer base {
