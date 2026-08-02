@@ -34,6 +34,7 @@ import {
   guessCheckPlateColumn,
   indexCheckSheet,
   lookupPlate,
+  lookupPlateVoice,
 } from "@/lib/check-engine";
 import { isSpeechRecognitionSupported, startPlateSpeech } from "@/lib/speech-plate";
 
@@ -156,8 +157,8 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
     idbRemove(CHECK_IDB_KEY).catch(() => {});
   }
 
-  function tryLookup(raw: string) {
-    const hit = lookupPlate(index, raw);
+  function tryLookup(raw: string, voice = false) {
+    const hit = voice ? lookupPlateVoice(index, raw) : lookupPlate(index, raw);
     if (!hit) return false;
     setFound(hit);
     setDetailOpen(true);
@@ -191,18 +192,17 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
     }
     const handle = startPlateSpeech({
       onFinal: (transcript, candidates) => {
+        // الأطول أولًا + مطابقة صوتية دقيقة (لا تلتقط «12» بدل «1234»)
         for (const c of candidates) {
-          if (c && tryLookup(c)) {
+          if (c && tryLookup(c, true)) {
             setSpeechError(null);
             setInterim("");
-            // بعد ظهور النتيجة: إيقاف الأمر الصوتي فورًا
             speechRef.current?.stop();
             speechRef.current = null;
             setChecking(false);
             return;
           }
         }
-        // لم تظهر نتيجة: إشعار توجيهي مع استمرار السماع حتى يجد أو يوقف المستخدم
         if (candidates.some((c) => c && c.length >= 2) || transcript.trim().length >= 2) {
           const tip = "حاول إدخال أحرف منفصلة أو رقم";
           setSpeechError(tip);

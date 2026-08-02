@@ -19,7 +19,7 @@ import {
   CheckSheetData,
   CheckSheetRow,
   indexCheckSheet,
-  lookupPlate,
+  lookupPlateVoice,
 } from "@/lib/check-engine";
 import { googleMapsOpenUrl } from "@/lib/map-coords";
 import {
@@ -29,6 +29,7 @@ import {
   startAppVoice,
   AppVoiceOverlay,
 } from "@/lib/app-voice";
+import { createSpeechPlateBuffer, speechToPlateCandidates } from "@/lib/speech-plate";
 
 interface Recording {
   id: string;
@@ -62,6 +63,7 @@ export default function RecordPage({
   const chunksRef = React.useRef<Blob[]>([]);
   const speechRef = React.useRef<{ stop: () => void } | null>(null);
   const tipTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const plateBufRef = React.useRef(createSpeechPlateBuffer());
 
   React.useEffect(() => {
     idbGet<CheckSheetData>(CHECK_IDB_KEY).then((saved) => {
@@ -72,6 +74,7 @@ export default function RecordPage({
     return () => {
       speechRef.current?.stop();
       speechRef.current = null;
+      plateBufRef.current.reset();
       if (tipTimer.current) clearTimeout(tipTimer.current);
     };
   }, []);
@@ -87,6 +90,7 @@ export default function RecordPage({
   function stopListening() {
     speechRef.current?.stop();
     speechRef.current = null;
+    plateBufRef.current.reset();
     setListening(false);
     setInterim("");
   }
@@ -111,7 +115,7 @@ export default function RecordPage({
       return false;
     }
     for (const c of candidates) {
-      const hit = lookupPlate(checkIndex, c);
+      const hit = lookupPlateVoice(checkIndex, c);
       if (hit) {
         setFound(hit);
         return true;
@@ -123,9 +127,12 @@ export default function RecordPage({
   function handleTranscript(transcript: string, alternatives: string[]) {
     setLastHeard(transcript);
     const pool = [transcript, ...alternatives];
+
+    // أوامر التنقّل أولًا (بدون تجميع أرقام)
     for (const alt of pool) {
       const action = parseAppVoiceCommand(alt);
       if (!action) continue;
+      if (action.type === "plate_check") continue;
 
       if (action.type === "help") {
         showNotice(appVoiceHelpText(), 5500);
@@ -155,19 +162,28 @@ export default function RecordPage({
         void startRecording();
         return;
       }
+    }
 
-      if (action.type === "plate_check") {
-        if (tryPlateLookup(action.candidates)) {
-          showNotice(`وُجدت لوحة: ${action.label}`);
-          stopListening();
-          return;
-        }
+    // فحص لوحة مع تجميع المقاطع (١٢ + ٣٤ → ١٢٣٤)
+    const ranked = plateBufRef.current.ingest([transcript]);
+    const merged = new Set(ranked);
+    for (const alt of alternatives) {
+      for (const c of speechToPlateCandidates(alt)) merged.add(c);
+    }
+    const candidates = [...merged].sort((a, b) => b.length - a.length);
+
+    if (candidates.some((c) => c.length >= 1)) {
+      if (tryPlateLookup(candidates)) {
+        showNotice("وُجدت اللوحة");
+        stopListening();
+        return;
+      }
+      if (candidates.some((c) => c.length >= 2) || transcript.trim().length >= 2) {
         showNotice("حاول إدخال أحرف منفصلة أو رقم");
         return;
       }
     }
 
-    // لم يُفهم الأمر — إشعار توجيهي أقوى من التشيك
     if (transcript.trim().length >= 2) {
       showNotice("حاول إدخال أحرف منفصلة أو رقم — أو قل: افتح الفرز / التشيك / الخرائط");
     }
@@ -177,6 +193,7 @@ export default function RecordPage({
     setNotice(null);
     setFound(null);
     setLastHeard("");
+    plateBufRef.current.reset();
     if (!isAppVoiceSupported()) {
       showNotice("التعرف الصوتي غير مدعوم هنا — استخدم الأزرار للتنقل");
       return;

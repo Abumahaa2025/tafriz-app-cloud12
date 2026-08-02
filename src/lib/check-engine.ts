@@ -76,6 +76,19 @@ export function indexCheckSheet(data: CheckSheetData): Map<string, CheckSheetRow
   return map;
 }
 
+function plateDigits(raw: string): string {
+  return normalizeSearchText(raw).replace(/[^0-9]/g, "");
+}
+
+function plateLettersJoined(raw: string): string {
+  return extractPlateLetters(normalizeSearchText(raw)).join("");
+}
+
+function uniqueOrNull(hits: CheckSheetRow[]): CheckSheetRow | null {
+  if (hits.length === 1) return hits[0];
+  return null;
+}
+
 export function lookupPlate(
   index: Map<string, CheckSheetRow>,
   query: string
@@ -124,6 +137,84 @@ export function lookupPlate(
       const p = normalizeSearchText(row.plate).replace(/\s/g, "");
       if (p.includes(qSearch)) return row;
     }
+  }
+
+  return null;
+}
+
+/**
+ * مطابقة صوتية دقيقة — ترفض النتائج الجزئية الغلط (مثل مطابقة «12» لأول لوحة).
+ * تُستخدم مع أوامر الصوت فقط؛ البحث اليدوي يبقى على lookupPlate.
+ */
+export function lookupPlateVoice(
+  index: Map<string, CheckSheetRow>,
+  query: string
+): CheckSheetRow | null {
+  const norm = normalizePlate(query);
+  if (!norm) return null;
+
+  const exact = index.get(norm);
+  if (exact) return exact;
+
+  // تطابق تطبيع كامل على قيمة اللوحة المعروضة
+  for (const [, row] of index) {
+    if (normalizePlate(row.plate) === norm) return row;
+  }
+
+  const qSearch = normalizeSearchText(norm).replace(/\s/g, "");
+  if (!qSearch) return null;
+  const qLetters = qSearch.replace(/[0-9]/g, "");
+  const digitsOnly = qSearch.replace(/[^0-9]/g, "");
+
+  // أرقام فقط
+  if (digitsOnly.length > 0 && qLetters.length === 0) {
+    const exactDigitHits: CheckSheetRow[] = [];
+    const containHits: CheckSheetRow[] = [];
+    for (const [, row] of index) {
+      const d = plateDigits(row.plate);
+      if (!d) continue;
+      if (d === digitsOnly) exactDigitHits.push(row);
+      else if (d.includes(digitsOnly)) containHits.push(row);
+    }
+    const exactHit = uniqueOrNull(exactDigitHits) ?? (exactDigitHits[0] ?? null);
+    if (exactHit) return exactHit;
+    // مقطع قصير (2–3) فقط إذا كان وحيدًا تمامًا — يمنع «12» ثم «34» من التقاط لوحة غلط
+    if (digitsOnly.length >= 2 && digitsOnly.length <= 3) {
+      return uniqueOrNull(containHits);
+    }
+    if (digitsOnly.length >= 4) {
+      return uniqueOrNull(containHits);
+    }
+    return null;
+  }
+
+  // حروف فقط
+  if (qLetters.length > 0 && digitsOnly.length === 0) {
+    const exactLetterHits: CheckSheetRow[] = [];
+    const containHits: CheckSheetRow[] = [];
+    for (const [, row] of index) {
+      const letters = plateLettersJoined(row.plate);
+      if (!letters) continue;
+      if (letters === qLetters) exactLetterHits.push(row);
+      else if (letters.includes(qLetters)) containHits.push(row);
+    }
+    if (exactLetterHits.length === 1) return exactLetterHits[0];
+    // حرف/حروف: لا نُرجع نتيجة غامضة (عدة لوحات)
+    return uniqueOrNull(containHits);
+  }
+
+  // رقم + حرف معًا
+  if (qLetters.length > 0 && digitsOnly.length > 0) {
+    const hits: CheckSheetRow[] = [];
+    for (const [, row] of index) {
+      const p = normalizeSearchText(row.plate).replace(/\s/g, "");
+      const d = plateDigits(row.plate);
+      const letters = plateLettersJoined(row.plate);
+      if (p.includes(qSearch) || (d.includes(digitsOnly) && letters.includes(qLetters))) {
+        hits.push(row);
+      }
+    }
+    return uniqueOrNull(hits);
   }
 
   return null;
