@@ -89,6 +89,44 @@ function uniqueOrNull(hits: CheckSheetRow[]): CheckSheetRow | null {
   return null;
 }
 
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 0; i < a.length; i++) {
+    let prev = i + 1;
+    for (let j = 0; j < b.length; j++) {
+      const cur = a[i] === b[j] ? row[j] : Math.min(row[j], row[j + 1], prev) + 1;
+      row[j] = prev;
+      prev = cur;
+    }
+    row[b.length] = prev;
+  }
+  return row[b.length];
+}
+
+function findSimilarDigitPlate(
+  index: Map<string, CheckSheetRow>,
+  digitsOnly: string
+): CheckSheetRow | null {
+  if (digitsOnly.length < 2) return null;
+  let best: CheckSheetRow | null = null;
+  let bestDist = Infinity;
+  for (const [, row] of index) {
+    const d = plateDigits(row.plate);
+    if (!d) continue;
+    if (Math.abs(d.length - digitsOnly.length) > 1) continue;
+    const dist = levenshtein(digitsOnly, d);
+    const maxAllowed = digitsOnly.length <= 3 ? 1 : 2;
+    if (dist > 0 && dist <= maxAllowed && dist < bestDist) {
+      bestDist = dist;
+      best = row;
+    }
+  }
+  return best;
+}
+
 export function lookupPlate(
   index: Map<string, CheckSheetRow>,
   query: string
@@ -142,53 +180,58 @@ export function lookupPlate(
   return null;
 }
 
+export type VoicePlateLookup =
+  | { status: "exact"; row: CheckSheetRow }
+  | { status: "similar"; row: CheckSheetRow; query: string }
+  | { status: "none"; query: string };
+
 /**
- * مطابقة صوتية دقيقة — ترفض النتائج الجزئية الغلط (مثل مطابقة «12» لأول لوحة).
- * تُستخدم مع أوامر الصوت فقط؛ البحث اليدوي يبقى على lookupPlate.
+ * مطابقة صوتية دقيقة:
+ * - لا تلتقط مقطعًا قصيرًا (مثل 10 قبل 20)
+ * - عند غياب التطابق تُرجع أقرب رقم مشابه مع تنبيه
  */
-export function lookupPlateVoice(
+export function lookupPlateVoiceDetailed(
   index: Map<string, CheckSheetRow>,
   query: string
-): CheckSheetRow | null {
+): VoicePlateLookup {
   const norm = normalizePlate(query);
-  if (!norm) return null;
+  const qSearch = normalizeSearchText(norm).replace(/\s/g, "");
+  if (!qSearch) return { status: "none", query: String(query ?? "") };
 
-  const exact = index.get(norm);
-  if (exact) return exact;
-
-  // تطابق تطبيع كامل على قيمة اللوحة المعروضة
+  const exactNorm = index.get(norm);
+  if (exactNorm) return { status: "exact", row: exactNorm };
   for (const [, row] of index) {
-    if (normalizePlate(row.plate) === norm) return row;
+    if (normalizePlate(row.plate) === norm) return { status: "exact", row };
   }
 
-  const qSearch = normalizeSearchText(norm).replace(/\s/g, "");
-  if (!qSearch) return null;
   const qLetters = qSearch.replace(/[0-9]/g, "");
   const digitsOnly = qSearch.replace(/[^0-9]/g, "");
 
-  // أرقام فقط
   if (digitsOnly.length > 0 && qLetters.length === 0) {
     const exactDigitHits: CheckSheetRow[] = [];
-    const containHits: CheckSheetRow[] = [];
     for (const [, row] of index) {
       const d = plateDigits(row.plate);
-      if (!d) continue;
-      if (d === digitsOnly) exactDigitHits.push(row);
-      else if (d.includes(digitsOnly)) containHits.push(row);
+      if (d && d === digitsOnly) exactDigitHits.push(row);
     }
-    const exactHit = uniqueOrNull(exactDigitHits) ?? (exactDigitHits[0] ?? null);
-    if (exactHit) return exactHit;
-    // مقطع قصير (2–3) فقط إذا كان وحيدًا تمامًا — يمنع «12» ثم «34» من التقاط لوحة غلط
-    if (digitsOnly.length >= 2 && digitsOnly.length <= 3) {
-      return uniqueOrNull(containHits);
+    if (exactDigitHits.length >= 1) {
+      return { status: "exact", row: exactDigitHits[0] };
     }
+
     if (digitsOnly.length >= 4) {
-      return uniqueOrNull(containHits);
+      const containHits: CheckSheetRow[] = [];
+      for (const [, row] of index) {
+        const d = plateDigits(row.plate);
+        if (d && d.includes(digitsOnly)) containHits.push(row);
+      }
+      const one = uniqueOrNull(containHits);
+      if (one) return { status: "exact", row: one };
     }
-    return null;
+
+    const similar = findSimilarDigitPlate(index, digitsOnly);
+    if (similar) return { status: "similar", row: similar, query: digitsOnly };
+    return { status: "none", query: digitsOnly };
   }
 
-  // حروف فقط
   if (qLetters.length > 0 && digitsOnly.length === 0) {
     const exactLetterHits: CheckSheetRow[] = [];
     const containHits: CheckSheetRow[] = [];
@@ -198,24 +241,39 @@ export function lookupPlateVoice(
       if (letters === qLetters) exactLetterHits.push(row);
       else if (letters.includes(qLetters)) containHits.push(row);
     }
-    if (exactLetterHits.length === 1) return exactLetterHits[0];
-    // حرف/حروف: لا نُرجع نتيجة غامضة (عدة لوحات)
-    return uniqueOrNull(containHits);
+    if (exactLetterHits.length === 1) return { status: "exact", row: exactLetterHits[0] };
+    const one = uniqueOrNull(containHits);
+    if (one) return { status: "exact", row: one };
+    return { status: "none", query: qLetters };
   }
 
-  // رقم + حرف معًا
   if (qLetters.length > 0 && digitsOnly.length > 0) {
     const hits: CheckSheetRow[] = [];
     for (const [, row] of index) {
       const p = normalizeSearchText(row.plate).replace(/\s/g, "");
       const d = plateDigits(row.plate);
       const letters = plateLettersJoined(row.plate);
-      if (p.includes(qSearch) || (d.includes(digitsOnly) && letters.includes(qLetters))) {
+      if (p.includes(qSearch) || (d === digitsOnly && letters === qLetters)) {
         hits.push(row);
       }
     }
-    return uniqueOrNull(hits);
+    const one = uniqueOrNull(hits);
+    if (one) return { status: "exact", row: one };
+    if (digitsOnly.length >= 3) {
+      const similar = findSimilarDigitPlate(index, digitsOnly);
+      if (similar) return { status: "similar", row: similar, query: qSearch };
+    }
+    return { status: "none", query: qSearch };
   }
 
-  return null;
+  return { status: "none", query: qSearch };
+}
+
+/** توافق خلفي: تطابق دقيق فقط (بدون مشابه) */
+export function lookupPlateVoice(
+  index: Map<string, CheckSheetRow>,
+  query: string
+): CheckSheetRow | null {
+  const r = lookupPlateVoiceDetailed(index, query);
+  return r.status === "exact" ? r.row : null;
 }

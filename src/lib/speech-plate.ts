@@ -290,21 +290,27 @@ function rankPlateCandidates(list: string[]): string[] {
   });
 }
 
-/** يستخرج تسلسل أرقام/حروف اللوحة من النطق دون كلمات الجملة */
-export function speechToPlateToken(raw: string): string {
+/** يستخرج مقاطع اللوحة بالترتيب المنطوق (12 ثم 35 → ["12","35"] وليس العكس) */
+export function extractOrderedPlateParts(raw: string): string[] {
   const text = toWesternDigits(String(raw ?? "").trim());
-  if (!text) return "";
+  if (!text) return [];
   const parts = text.split(/[\s,./\\|_+-]+/).map((p) => p.trim()).filter(Boolean);
-  let built = "";
+  const out: string[] = [];
   for (const part of parts) {
     const resolved = resolveSpokenPart(part);
-    if (resolved != null) built += resolved;
+    if (resolved != null) out.push(resolved);
   }
-  // أرقام ملتصقة ظاهرة حتى لو باقي الجملة ضوضاء
-  if (!built) {
+  if (out.length === 0) {
     const m = text.match(/\d{1,8}/g);
-    if (m) built = m.join("");
+    if (m) return m;
   }
+  return out;
+}
+
+/** يستخرج تسلسل أرقام/حروف اللوحة من النطق دون كلمات الجملة */
+export function speechToPlateToken(raw: string): string {
+  const parts = extractOrderedPlateParts(raw);
+  const built = parts.join("");
   return normalizePlate(built) || built;
 }
 
@@ -313,25 +319,19 @@ export function speechToPlateCandidate(raw: string): string {
   return candidates[0] ?? "";
 }
 
-/** عدة مرشحات من نفس النطق — الأطول/الأدق أولًا */
+/** مرشحات للبحث — المجموع بالترتيب المنطوق أولًا (بدون مقاطع قصيرة منفصلة تربك المطابقة) */
 export function speechToPlateCandidates(raw: string): string[] {
   const text = toWesternDigits(String(raw ?? "").trim());
   if (!text) return [];
 
   const out = new Set<string>();
-  const token = speechToPlateToken(text);
-  if (token) out.add(token);
-
-  const parts = text.split(/[\s,./\\|_+-]+/).map((p) => p.trim()).filter(Boolean);
-
-  for (const m of text.matchAll(/\d{2,8}/g)) {
-    out.add(m[0]);
-  }
+  const parts = extractOrderedPlateParts(text);
+  const joined = parts.join("");
+  if (joined) out.add(normalizePlate(joined) || joined);
 
   let letters = "";
-  for (const part of parts) {
-    const r = resolveSpokenPart(part);
-    if (r && /^[\u0600-\u06FFa-zA-Z]$/.test(r)) letters += r;
+  for (const p of parts) {
+    if (/^[\u0600-\u06FFa-zA-Z]$/.test(p)) letters += p;
   }
   if (letters) out.add(letters);
 
@@ -342,40 +342,48 @@ export function speechToPlateCandidates(raw: string): string[] {
   return rankPlateCandidates([...out]);
 }
 
-/** يجمّع مقاطع الصوت المتتالية (١٢ ثم ٣٤ → ١٢٣٤) بدل مطابقة أول مقطع غلط */
+const VOICE_COMMIT_MS = 1400;
+
+/** يجمّع المقاطع بالترتيب: 12 ثم 35 → 1235، مع تأخير قبل اعتماد النتيجة */
 export function createSpeechPlateBuffer() {
-  let buffer = "";
+  let chunks: string[] = [];
   return {
     reset() {
-      buffer = "";
+      chunks = [];
     },
     get value() {
-      return buffer;
+      return chunks.join("");
+    },
+    get chunks() {
+      return [...chunks];
     },
     ingest(transcripts: string[]): string[] {
-      const chunkSet = new Set<string>();
       for (const t of transcripts) {
-        const token = speechToPlateToken(t);
-        if (token) {
-          if (!buffer) {
-            buffer = token;
-          } else if (token.startsWith(buffer) && token.length > buffer.length) {
-            // المحرك أعاد المقطع كاملًا أطول من المخزن
-            buffer = token;
-          } else if (buffer.startsWith(token) && buffer.length >= token.length) {
-            // تكرار لنفس المقطع أو جزء منه — تجاهل
-          } else if (buffer.endsWith(token) && token.length > 1) {
-            // نفس المقطع أُعيد — تجاهل
-          } else {
-            buffer += token;
+        const parts = extractOrderedPlateParts(t);
+        if (parts.length === 0) continue;
+        const token = parts.join("");
+        const joined = chunks.join("");
+
+        if (!joined) {
+          chunks = [...parts];
+        } else if (token.startsWith(joined) && token.length > joined.length) {
+          // إعادة نطق الرقم كاملًا أطول
+          chunks = [token];
+        } else if (joined.startsWith(token) && joined.length > token.length) {
+          // تكرار لبادئة — تجاهل
+        } else if (joined.endsWith(token) && token.length > 1) {
+          // تكرار لنفس المقطع — تجاهل
+        } else {
+          // ألحق بالترتيب المنطوق (الأول فالأول)
+          for (const p of parts) {
+            if (chunks.length && chunks[chunks.length - 1] === p) continue;
+            chunks.push(p);
           }
         }
-        for (const c of speechToPlateCandidates(t)) chunkSet.add(c);
       }
-      const all = new Set<string>();
-      if (buffer) all.add(buffer);
-      for (const c of chunkSet) all.add(c);
-      return rankPlateCandidates([...all]);
+      const buffer = chunks.join("");
+      // مرشح البحث = المخزن المجمع فقط (يحافظ على 12+35 وليس 35+12)
+      return buffer ? [normalizePlate(buffer) || buffer] : [];
     },
   };
 }
@@ -402,6 +410,7 @@ export function startPlateSpeech(opts: {
   rec.maxAlternatives = 5;
   let stopped = false;
   let restartTimer: ReturnType<typeof setTimeout> | null = null;
+  let commitTimer: ReturnType<typeof setTimeout> | null = null;
   const plateBuf = createSpeechPlateBuffer();
 
   rec.onresult = (ev) => {
@@ -416,14 +425,19 @@ export function startPlateSpeech(opts: {
           if (t) transcripts.push(t);
         }
         if (transcripts.length === 0) continue;
-        // بديل أساسي فقط للمخزن لتفادي تكرار نفس الرقم من البدائل
         const ranked = plateBuf.ingest([transcripts[0]]);
-        // أضف مرشحات باقي البدائل بدون مضاعفة المخزن
-        const extra = new Set(ranked);
-        for (let a = 1; a < transcripts.length; a++) {
-          for (const c of speechToPlateCandidates(transcripts[a])) extra.add(c);
-        }
-        opts.onFinal(transcripts[0], rankPlateCandidates([...extra]));
+        // أظهر التجميع الحالي فورًا
+        if (plateBuf.value) opts.onInterim?.(plateBuf.value);
+        // انتظر اكتمال المقاطع (12 … ثم 35) قبل اعتماد النتيجة — يمنع التقاط 10 قبل 20
+        if (commitTimer) clearTimeout(commitTimer);
+        const heard = transcripts[0];
+        commitTimer = setTimeout(() => {
+          if (stopped) return;
+          const finalCandidates = plateBuf.value
+            ? [normalizePlate(plateBuf.value) || plateBuf.value]
+            : ranked;
+          opts.onFinal(heard, finalCandidates);
+        }, VOICE_COMMIT_MS);
       } else {
         interim += result[0]?.transcript ?? "";
       }
@@ -473,6 +487,7 @@ export function startPlateSpeech(opts: {
     stop: () => {
       stopped = true;
       plateBuf.reset();
+      if (commitTimer) clearTimeout(commitTimer);
       if (restartTimer) clearTimeout(restartTimer);
       try {
         rec.onend = null;

@@ -19,7 +19,7 @@ import {
   CheckSheetData,
   CheckSheetRow,
   indexCheckSheet,
-  lookupPlateVoice,
+  lookupPlateVoiceDetailed,
 } from "@/lib/check-engine";
 import { googleMapsOpenUrl } from "@/lib/map-coords";
 import {
@@ -29,7 +29,7 @@ import {
   startAppVoice,
   AppVoiceOverlay,
 } from "@/lib/app-voice";
-import { createSpeechPlateBuffer, speechToPlateCandidates } from "@/lib/speech-plate";
+import { createSpeechPlateBuffer } from "@/lib/speech-plate";
 
 interface Recording {
   id: string;
@@ -64,6 +64,7 @@ export default function RecordPage({
   const speechRef = React.useRef<{ stop: () => void } | null>(null);
   const tipTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const plateBufRef = React.useRef(createSpeechPlateBuffer());
+  const plateCommitRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   React.useEffect(() => {
     idbGet<CheckSheetData>(CHECK_IDB_KEY).then((saved) => {
@@ -76,6 +77,7 @@ export default function RecordPage({
       speechRef.current = null;
       plateBufRef.current.reset();
       if (tipTimer.current) clearTimeout(tipTimer.current);
+      if (plateCommitRef.current) clearTimeout(plateCommitRef.current);
     };
   }, []);
 
@@ -91,6 +93,7 @@ export default function RecordPage({
     speechRef.current?.stop();
     speechRef.current = null;
     plateBufRef.current.reset();
+    if (plateCommitRef.current) clearTimeout(plateCommitRef.current);
     setListening(false);
     setInterim("");
   }
@@ -109,26 +112,35 @@ export default function RecordPage({
     return true;
   }
 
-  function tryPlateLookup(candidates: string[]): boolean {
+  function commitPlateLookup(query: string) {
     if (!hasCheckFile || checkIndex.size === 0) {
       showNotice("ارفع ملف التشيك أولًا من تبويب التشيك");
-      return false;
+      return;
     }
-    for (const c of candidates) {
-      const hit = lookupPlateVoice(checkIndex, c);
-      if (hit) {
-        setFound(hit);
-        return true;
-      }
+    if (!query) return;
+    const result = lookupPlateVoiceDetailed(checkIndex, query);
+    if (result.status === "exact") {
+      setFound(result.row);
+      showNotice("وُجدت اللوحة");
+      stopListening();
+      return;
     }
-    return false;
+    if (result.status === "similar") {
+      setFound(result.row);
+      showNotice(
+        `لم يُعثر على الرقم المطلوب (${result.query})، وُجد رقم قريب الشبه: ${result.row.plate}`,
+        5500
+      );
+      stopListening();
+      return;
+    }
+    showNotice("حاول إدخال أحرف منفصلة أو رقم");
   }
 
   function handleTranscript(transcript: string, alternatives: string[]) {
     setLastHeard(transcript);
     const pool = [transcript, ...alternatives];
 
-    // أوامر التنقّل أولًا (بدون تجميع أرقام)
     for (const alt of pool) {
       const action = parseAppVoiceCommand(alt);
       if (!action) continue;
@@ -164,29 +176,22 @@ export default function RecordPage({
       }
     }
 
-    // فحص لوحة مع تجميع المقاطع (١٢ + ٣٤ → ١٢٣٤)
+    // تجميع بالترتيب: 12 ثم 35 → 1235 — والبحث بعد توقف قصير حتى لا يُلتقط 10 قبل 20
     const ranked = plateBufRef.current.ingest([transcript]);
-    const merged = new Set(ranked);
-    for (const alt of alternatives) {
-      for (const c of speechToPlateCandidates(alt)) merged.add(c);
-    }
-    const candidates = [...merged].sort((a, b) => b.length - a.length);
+    const assembled = plateBufRef.current.value || ranked[0] || "";
+    if (assembled) setInterim(assembled);
 
-    if (candidates.some((c) => c.length >= 1)) {
-      if (tryPlateLookup(candidates)) {
-        showNotice("وُجدت اللوحة");
-        stopListening();
+    if (plateCommitRef.current) clearTimeout(plateCommitRef.current);
+    plateCommitRef.current = setTimeout(() => {
+      const q = plateBufRef.current.value;
+      if (!q) {
+        if (transcript.trim().length >= 2) {
+          showNotice("حاول إدخال أحرف منفصلة أو رقم — أو قل: افتح الفرز / التشيك / الخرائط");
+        }
         return;
       }
-      if (candidates.some((c) => c.length >= 2) || transcript.trim().length >= 2) {
-        showNotice("حاول إدخال أحرف منفصلة أو رقم");
-        return;
-      }
-    }
-
-    if (transcript.trim().length >= 2) {
-      showNotice("حاول إدخال أحرف منفصلة أو رقم — أو قل: افتح الفرز / التشيك / الخرائط");
-    }
+      commitPlateLookup(q);
+    }, 1400);
   }
 
   function startListening() {
@@ -194,6 +199,7 @@ export default function RecordPage({
     setFound(null);
     setLastHeard("");
     plateBufRef.current.reset();
+    if (plateCommitRef.current) clearTimeout(plateCommitRef.current);
     if (!isAppVoiceSupported()) {
       showNotice("التعرف الصوتي غير مدعوم هنا — استخدم الأزرار للتنقل");
       return;

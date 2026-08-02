@@ -34,7 +34,7 @@ import {
   guessCheckPlateColumn,
   indexCheckSheet,
   lookupPlate,
-  lookupPlateVoice,
+  lookupPlateVoiceDetailed,
 } from "@/lib/check-engine";
 import { isSpeechRecognitionSupported, startPlateSpeech } from "@/lib/speech-plate";
 
@@ -157,15 +157,32 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
     idbRemove(CHECK_IDB_KEY).catch(() => {});
   }
 
-  function tryLookup(raw: string, voice = false) {
-    const hit = voice ? lookupPlateVoice(index, raw) : lookupPlate(index, raw);
-    if (!hit) return false;
-    setFound(hit);
+  function tryLookup(raw: string, voice = false): "exact" | "similar" | false {
+    if (!voice) {
+      const hit = lookupPlate(index, raw);
+      if (!hit) return false;
+      setFound(hit);
+      setDetailOpen(true);
+      setHitsLog((prev) =>
+        [{ plate: hit.plate, at: new Date().toLocaleTimeString("ar-SA") }, ...prev].slice(0, 40)
+      );
+      return "exact";
+    }
+    const result = lookupPlateVoiceDetailed(index, raw);
+    if (result.status === "none") return false;
+    setFound(result.row);
     setDetailOpen(true);
     setHitsLog((prev) =>
-      [{ plate: hit.plate, at: new Date().toLocaleTimeString("ar-SA") }, ...prev].slice(0, 40)
+      [{ plate: result.row.plate, at: new Date().toLocaleTimeString("ar-SA") }, ...prev].slice(0, 40)
     );
-    return true;
+    if (result.status === "similar") {
+      setSpeechError(
+        `لم يُعثر على الرقم المطلوب (${result.query})، وُجد رقم قريب الشبه: ${result.row.plate}`
+      );
+      return "similar";
+    }
+    setSpeechError(null);
+    return "exact";
   }
 
   function openFoundDetails(row: CheckSheetRow) {
@@ -192,10 +209,10 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
     }
     const handle = startPlateSpeech({
       onFinal: (transcript, candidates) => {
-        // الأطول أولًا + مطابقة صوتية دقيقة (لا تلتقط «12» بدل «1234»)
         for (const c of candidates) {
-          if (c && tryLookup(c, true)) {
-            setSpeechError(null);
+          if (!c) continue;
+          const outcome = tryLookup(c, true);
+          if (outcome) {
             setInterim("");
             speechRef.current?.stop();
             speechRef.current = null;
@@ -412,7 +429,7 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
         <p className="text-center text-xs text-muted-foreground">
           {interim
             ? "يسمع: " + interim
-            : "جاري التشيك — انطق اللوحة بوضوح (يتوقف تلقائيًا عند ظهور النتيجة)"}
+            : "جاري التشيك — انطق المقاطع بالترتيب (12 ثم 35) وسيُجمّع الرقم قبل البحث"}
         </p>
       )}
       {speechError && (
