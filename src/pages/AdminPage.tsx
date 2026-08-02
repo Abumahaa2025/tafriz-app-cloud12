@@ -38,6 +38,12 @@ export default function AdminPage({ onBack }: { onBack?: () => void }) {
   const [phones, setPhones] = React.useState<SupportPhone[]>(getSupportPhones());
   const [replyDrafts, setReplyDrafts] = React.useState<Record<string, string>>({});
   const [openThreadId, setOpenThreadId] = React.useState<string | null>(null);
+  const [actionNotice, setActionNotice] = React.useState<string | null>(null);
+
+  function flashAction(msg: string) {
+    setActionNotice(msg);
+    setTimeout(() => setActionNotice(null), 2800);
+  }
 
   const refresh = React.useCallback(async () => {
     setUsers(await backend.listUsers());
@@ -105,6 +111,12 @@ export default function AdminPage({ onBack }: { onBack?: () => void }) {
         <SummaryPill label="ملاحظات جديدة" value={unreadFeedback} />
         <SummaryPill label="أخطاء غير محلولة" value={unresolvedErrors} />
       </div>
+
+      {actionNotice && (
+        <p className="rounded-xl border border-primary/25 bg-primary/10 px-3 py-2 text-center text-xs font-bold text-primary">
+          {actionNotice}
+        </p>
+      )}
 
       <div className="flex flex-wrap gap-1 rounded-full border border-border bg-muted p-1 text-xs">
         {(
@@ -176,7 +188,8 @@ export default function AdminPage({ onBack }: { onBack?: () => void }) {
                       className="flex-1"
                       onClick={async () => {
                         await backend.approveUser(u.id, "الباقة الشهرية", 30);
-                        refresh();
+                        flashAction(`تمت الموافقة على ${u.identifier}`);
+                        await refresh();
                       }}
                     >
                       <Check className="h-4 w-4" />
@@ -188,7 +201,12 @@ export default function AdminPage({ onBack }: { onBack?: () => void }) {
                       className="flex-1"
                       onClick={async () => {
                         await backend.revokeUser(u.id);
-                        refresh();
+                        // تحديث فوري في قائمة المالك
+                        setUsers((prev) =>
+                          prev.map((x) => (x.id === u.id ? { ...x, status: "revoked" } : x))
+                        );
+                        flashAction(`تم إيقاف ${u.identifier} — سيُمنع فورًا ويصله إشعار`);
+                        await refresh();
                       }}
                     >
                       <Ban className="h-4 w-4" />

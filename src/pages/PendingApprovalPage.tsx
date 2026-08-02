@@ -18,16 +18,15 @@ export default function PendingApprovalPage() {
   const [showCodeBox, setShowCodeBox] = React.useState(false);
   const [redeemBusy, setRedeemBusy] = React.useState(false);
 
-  // بعد موافقة المالك يتحدّث الوضع تلقائيًا بدون إعادة تثبيت
+  // بعد موافقة/إيقاف المالك يتحدّث الوضع تلقائيًا
   React.useEffect(() => {
-    if (revoked) return;
     const tick = () => {
       refresh().catch(() => {});
     };
     tick();
     const interval = setInterval(tick, 4000);
     return () => clearInterval(interval);
-  }, [refresh, revoked]);
+  }, [refresh]);
 
   function requestMessage() {
     if (!user) return "";

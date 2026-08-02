@@ -119,6 +119,12 @@ export const localBackend: Backend = {
     const user = users.find((u) => u.identifierType === identifierType && u.identifier === identifier);
     if (!user) throw new BackendError("not_found", "لا يوجد حساب بهذه البيانات");
     if (user.password !== pwd) throw new BackendError("bad_password", "كلمة المرور غير صحيحة");
+    if (user.status === "revoked") {
+      throw new BackendError(
+        "not_allowed",
+        "تم إيقاف حسابك من الإدارة. تواصل مع المالك عبر واتساب لإعادة التفعيل."
+      );
+    }
     saveLocal(SESSION_KEY, user.id);
     writeUsers(users.map((u) => (u.id === user.id ? { ...u, lastSeenAt: new Date().toISOString() } : u)));
     return strip({ ...user, lastSeenAt: new Date().toISOString() });

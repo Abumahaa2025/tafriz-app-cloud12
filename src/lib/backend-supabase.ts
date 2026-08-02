@@ -277,6 +277,13 @@ export const supabaseBackend: Backend = {
             await db.auth.signOut({ scope: "local" });
             throw new BackendError("bad_password", "البريد/الجوال أو كلمة المرور غير صحيحة");
           }
+          if (existing.status === "revoked") {
+            await db.auth.signOut({ scope: "local" });
+            throw new BackendError(
+              "not_allowed",
+              "تم إيقاف حسابك من الإدارة. تواصل مع المالك عبر واتساب لإعادة التفعيل."
+            );
+          }
           return existing;
         }
         return ensureProfile(db, data.user.id, identifierType, identifier);
