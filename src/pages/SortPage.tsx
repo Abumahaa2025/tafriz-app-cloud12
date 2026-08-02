@@ -14,7 +14,7 @@ import { AppMenu, MenuTarget } from "@/components/AppMenu";
 import * as XLSX from "xlsx";
 import { Capacitor } from "@capacitor/core";
 import { parseSpreadsheet, guessColumn, ParsedSheet } from "@/lib/xlsx-utils";
-import { runSortChunked, SortResult } from "@/lib/sort-logic";
+import { runSortChunked, matchedPlateNorms, SortResult } from "@/lib/sort-logic";
 import { loadLocal, saveLocal } from "@/lib/storage";
 import { idbGet, idbRemove, idbSet } from "@/lib/idb";
 import { consumeSharedFile } from "@/lib/shared-file";
@@ -24,6 +24,8 @@ import { useAuth } from "@/context/AuthContext";
 
 const SORT_DATA_IDB = "sort_data_sheet_v1";
 const SORT_REFERRAL_IDB = "sort_referral_sheet_v1";
+/** لوحات سبق ظهورها في فرز كلي/جديد — أساس استبعاد «فرز جديد» */
+const SORT_BASELINE_IDB = "sort_baseline_plates_v1";
 
 type NavShare = Navigator & {
   canShare?: (data: { files?: File[]; text?: string; title?: string }) => boolean;
@@ -121,17 +123,23 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
   const [actionNotice, setActionNotice] = React.useState<string | null>(null);
   const resultsRef = React.useRef<HTMLDivElement | null>(null);
   const noticeTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const baselineRef = React.useRef<Set<string>>(new Set());
 
   // استعادة أوراق الداتا الثقيلة من IndexedDB (بدون تجميد الواجهة)
   React.useEffect(() => {
     let cancelled = false;
-    Promise.all([idbGet<ParsedSheet>(SORT_DATA_IDB), idbGet<ParsedSheet>(SORT_REFERRAL_IDB)]).then(
-      ([data, referral]) => {
-        if (cancelled) return;
-        if (data?.rows?.length) setDataSheet(data);
-        if (referral?.rows?.length) setReferralSheet(referral);
+    Promise.all([
+      idbGet<ParsedSheet>(SORT_DATA_IDB),
+      idbGet<ParsedSheet>(SORT_REFERRAL_IDB),
+      idbGet<string[]>(SORT_BASELINE_IDB),
+    ]).then(([data, referral, baseline]) => {
+      if (cancelled) return;
+      if (data?.rows?.length) setDataSheet(data);
+      if (referral?.rows?.length) setReferralSheet(referral);
+      if (Array.isArray(baseline) && baseline.length) {
+        baselineRef.current = new Set(baseline.filter(Boolean));
       }
-    );
+    });
     return () => {
       cancelled = true;
     };
@@ -232,27 +240,58 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
     setReferralProgress(null);
     setReferralPlateColumn("");
     setResult(null);
+    baselineRef.current = new Set();
     idbRemove(SORT_DATA_IDB).catch(() => {});
     idbRemove(SORT_REFERRAL_IDB).catch(() => {});
+    idbRemove(SORT_BASELINE_IDB).catch(() => {});
+  }
+
+  async function persistBaseline(next: Set<string>) {
+    baselineRef.current = next;
+    await idbSet(SORT_BASELINE_IDB, [...next]);
   }
 
   async function handleRunSort() {
     if (!dataSheet || !referralSheet || !plateColumn || !streetColumn || !referralPlateColumn) {
       return;
     }
+    const isNewMode = mode === "new";
+    const excludePlates = isNewMode ? baselineRef.current : null;
     const res = await runSortChunked(
       dataSheet,
       plateColumn,
       streetColumn,
       referralSheet,
       referralPlateColumn,
-      mapColumn || undefined
+      mapColumn || undefined,
+      8000,
+      { excludePlates }
     );
     setResult(res);
-    // إظهار النتائج فورًا بعد الفرز (خصوصًا داخل تطبيق أندرويد حيث الشريط السفلي يغطي الجدول)
+
+    const norms = matchedPlateNorms(res);
+    if (!isNewMode) {
+      // فرز كلي: يعيد أساس المقارنة من الصفر
+      await persistBaseline(new Set(norms));
+    } else if (norms.length > 0) {
+      // فرز جديد: يضيف اللوحات الجديدة للأساس حتى لا تظهر مرة أخرى
+      const merged = new Set(baselineRef.current);
+      for (const n of norms) merged.add(n);
+      await persistBaseline(merged);
+    }
+
     requestAnimationFrame(() => {
       resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
+
+    if (isNewMode) {
+      flashNotice(
+        res.matchedRows.length === 0
+          ? "فرز جديد: لا توجد لوحات جديدة عن الفرز السابق"
+          : `فرز جديد: ${res.matchedRows.length} لوحة جديدة`
+      );
+    }
+
     backend.saveSortHistoryEntry({
       dataFileName: dataFile?.name ?? "الداتا",
       referralFileName: referralFile?.name ?? "الإحالة",

@@ -17,9 +17,15 @@ export interface SortResult {
   distinctMatchedPlates: number; // فرز من الإحالة
 }
 
+export type SortRunOptions = {
+  /** لوحات سبق فرزها — تُستبعد في «فرز جديد» فقط */
+  excludePlates?: Set<string> | null;
+};
+
 /**
  * Matches every row of the data sheet against the referral plate list.
  * A row "sorts" when its normalized plate number exists in the referral file.
+ * If excludePlates is set (فرز جديد), previously-sorted plates are skipped.
  */
 export function runSort(
   data: ParsedSheet,
@@ -27,13 +33,15 @@ export function runSort(
   dataStreetColumn: string,
   referral: ParsedSheet,
   referralPlateColumn: string,
-  dataMapColumn?: string
+  dataMapColumn?: string,
+  options?: SortRunOptions
 ): SortResult {
   const referralPlates = new Set(
     referral.rows
       .map((r) => normalizePlate(r[referralPlateColumn]))
       .filter((p) => p.length > 0)
   );
+  const exclude = options?.excludePlates;
 
   const matchedRows: SortResultRow[] = [];
   const distinctMatched = new Set<string>();
@@ -45,6 +53,7 @@ export function runSort(
     const street = String(row[dataStreetColumn] ?? "");
 
     if (plateNorm.length > 0 && referralPlates.has(plateNorm)) {
+      if (exclude?.has(plateNorm)) continue;
       const mapUrl = findMapsUrlInRow(row, dataMapColumn);
       const coords = mapUrl ? coordsFromMapsUrl(mapUrl) : null;
       matchedRows.push({
@@ -75,13 +84,15 @@ export async function runSortChunked(
   referral: ParsedSheet,
   referralPlateColumn: string,
   dataMapColumn?: string,
-  chunkSize = 8000
+  chunkSize = 8000,
+  options?: SortRunOptions
 ): Promise<SortResult> {
   const referralPlates = new Set(
     referral.rows
       .map((r) => normalizePlate(r[referralPlateColumn]))
       .filter((p) => p.length > 0)
   );
+  const exclude = options?.excludePlates;
 
   const matchedRows: SortResultRow[] = [];
   const distinctMatched = new Set<string>();
@@ -97,6 +108,7 @@ export async function runSortChunked(
       const street = String(row[dataStreetColumn] ?? "");
 
       if (plateNorm.length > 0 && referralPlates.has(plateNorm)) {
+        if (exclude?.has(plateNorm)) continue;
         const mapUrl = findMapsUrlInRow(row, dataMapColumn);
         const coords = mapUrl ? coordsFromMapsUrl(mapUrl) : null;
         matchedRows.push({
@@ -122,4 +134,14 @@ export async function runSortChunked(
     unsortedCount,
     distinctMatchedPlates: distinctMatched.size,
   };
+}
+
+/** لوحات مطبّعة من نتيجة فرز — لأساس «فرز جديد» */
+export function matchedPlateNorms(result: SortResult): string[] {
+  const out = new Set<string>();
+  for (const row of result.matchedRows) {
+    const n = normalizePlate(row.plate);
+    if (n) out.add(n);
+  }
+  return [...out];
 }
