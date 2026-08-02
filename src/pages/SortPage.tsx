@@ -1,5 +1,5 @@
 import * as React from "react";
-import { BarChart3, FileText, Eraser, Share2, Copy, ListChecks, ChevronDown, ScanLine } from "lucide-react";
+import { BarChart3, FileText, Eraser, Share2, Copy, ListChecks, ChevronDown, ScanLine, Download, Trash2, ArrowUpFromLine, ClipboardPaste } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +21,16 @@ import { consumeSharedFile } from "@/lib/shared-file";
 import { listenForNativeSharedFile } from "@/lib/native-import";
 import { backend } from "@/lib/backend";
 import { useAuth } from "@/context/AuthContext";
+import {
+  loadSortLibrary,
+  saveSortLibrary,
+  createLibraryFile,
+  mergeEnabledSheets,
+  appendSheetToFile,
+  platesFromPasteText,
+  totalPlateEstimate,
+  type SortLibraryFile,
+} from "@/lib/sort-file-library";
 
 const SORT_DATA_IDB = "sort_data_sheet_v1";
 const SORT_REFERRAL_IDB = "sort_referral_sheet_v1";
@@ -124,6 +134,32 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
   const resultsRef = React.useRef<HTMLDivElement | null>(null);
   const noticeTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const baselineRef = React.useRef<Set<string>>(new Set());
+  const [library, setLibrary] = React.useState<SortLibraryFile[]>([]);
+  const [pasteText, setPasteText] = React.useState("");
+  const [pasteOpen, setPasteOpen] = React.useState(false);
+  const appendInputRef = React.useRef<HTMLInputElement | null>(null);
+  const appendTargetId = React.useRef<string | null>(null);
+
+
+
+  async function persistLibrary(next: SortLibraryFile[]) {
+    setLibrary(next);
+    await saveSortLibrary(next);
+    const merged = mergeEnabledSheets(next);
+    if (merged) {
+      setDataSheet(merged);
+      setDataFile({ name: `${next.filter((f) => f.enabled).length} ملف مفعّل` });
+      const guessedPlate = guessColumn(merged.headers, ["لوحة", "اللوحة", "Plate"]);
+      if (guessedPlate) setPlateColumn(guessedPlate);
+      const street = guessColumn(merged.headers, ["شارع", "الشارع", "Street"], guessedPlate);
+      if (street) setStreetColumn(street);
+      const map = guessMapColumn(merged.headers);
+      if (map) setMapColumn(map);
+    } else {
+      setDataSheet(null);
+      setDataFile(null);
+    }
+  }
 
   // استعادة أوراق الداتا الثقيلة من IndexedDB (بدون تجميد الواجهة)
   React.useEffect(() => {
@@ -132,12 +168,25 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
       idbGet<ParsedSheet>(SORT_DATA_IDB),
       idbGet<ParsedSheet>(SORT_REFERRAL_IDB),
       idbGet<string[]>(SORT_BASELINE_IDB),
-    ]).then(([data, referral, baseline]) => {
+      loadSortLibrary(),
+    ]).then(([data, referral, baseline, lib]) => {
       if (cancelled) return;
-      if (data?.rows?.length) setDataSheet(data);
       if (referral?.rows?.length) setReferralSheet(referral);
       if (Array.isArray(baseline) && baseline.length) {
         baselineRef.current = new Set(baseline.filter(Boolean));
+      }
+      if (lib.length > 0) {
+        setLibrary(lib);
+        const merged = mergeEnabledSheets(lib);
+        if (merged) {
+          setDataSheet(merged);
+          setDataFile({ name: `${lib.filter((f) => f.enabled).length} ملف مفعّل` });
+        }
+      } else if (data?.rows?.length) {
+        const seeded = [createLibraryFile(initial.dataFileMeta?.name ?? "الداتا.xlsx", data, true)];
+        setLibrary(seeded);
+        saveSortLibrary(seeded).catch(() => {});
+        setDataSheet(data);
       }
     });
     return () => {
@@ -190,13 +239,10 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
     const timer = fakeProgress(setDataProgress);
     try {
       const parsed = await parseSpreadsheet(file);
-      setDataSheet(parsed);
-      // لا نرفع للسحابة كل صفوف الملفات الضخمة — يكفي عيّنة للأرشيف
       backend.saveUpload(file.name, parsed.headers, parsed.rows).catch(() => {});
-      const guessedPlate = guessColumn(parsed.headers, ["لوحة", "اللوحة", "Plate"]);
-      setPlateColumn(guessedPlate ?? "");
-      setStreetColumn(guessColumn(parsed.headers, ["شارع", "الشارع", "Street"], guessedPlate) ?? "");
-      setMapColumn(guessMapColumn(parsed.headers));
+      const entry = createLibraryFile(file.name, parsed, true);
+      const current = await loadSortLibrary();
+      await persistLibrary([entry, ...current].slice(0, 20));
     } catch (err) {
       await backend.logError(
         err instanceof Error ? err.message : "تعذّر قراءة ملف الداتا",
@@ -241,6 +287,9 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
     setReferralPlateColumn("");
     setResult(null);
     baselineRef.current = new Set();
+    setLibrary([]);
+    setPasteText("");
+    saveSortLibrary([]).catch(() => {});
     idbRemove(SORT_DATA_IDB).catch(() => {});
     idbRemove(SORT_REFERRAL_IDB).catch(() => {});
     idbRemove(SORT_BASELINE_IDB).catch(() => {});
@@ -249,6 +298,72 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
   async function persistBaseline(next: Set<string>) {
     baselineRef.current = next;
     await idbSet(SORT_BASELINE_IDB, [...next]);
+  }
+
+
+  async function toggleLibraryFile(id: string) {
+    const next = library.map((f) => (f.id === id ? { ...f, enabled: !f.enabled } : f));
+    await persistLibrary(next);
+  }
+
+  async function deleteLibraryFile(id: string) {
+    const next = library.filter((f) => f.id !== id);
+    await persistLibrary(next);
+  }
+
+  async function downloadLibraryFile(file: SortLibraryFile) {
+    const ws = XLSX.utils.json_to_sheet(
+      file.rows.map((row) => {
+        const o: Record<string, string | number> = {};
+        for (const h of file.headers) o[h] = row[h] ?? "";
+        return o;
+      })
+    );
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "data");
+    const bytes = XLSX.write(wb, { bookType: "xlsx", type: "array" }) as number[];
+    const blob = new Blob([new Uint8Array(bytes)], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = file.fileName.endsWith(".xlsx") ? file.fileName : `${file.fileName}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function requestAppend(id: string) {
+    appendTargetId.current = id;
+    appendInputRef.current?.click();
+  }
+
+  async function handleAppendFile(file: File) {
+    const targetId = appendTargetId.current;
+    appendTargetId.current = null;
+    if (!targetId) return;
+    try {
+      const parsed = await parseSpreadsheet(file);
+      const next = library.map((f) => (f.id === targetId ? appendSheetToFile(f, parsed) : f));
+      await persistLibrary(next);
+      flashNotice(`تم إلحاق ${parsed.rows.length} صف`);
+    } catch (err) {
+      flashNotice(err instanceof Error ? err.message : "تعذّر الإلحاق");
+    }
+  }
+
+  function applyPastePlates() {
+    const sheet = platesFromPasteText(pasteText);
+    if (sheet.rows.length === 0) {
+      flashNotice("لا توجد لوحات في النص الملصوق");
+      return;
+    }
+    setReferralSheet(sheet);
+    setReferralFile({ name: `لصق-${sheet.rows.length}-لوحة.txt` });
+    setReferralPlateColumn("اللوحة");
+    setReferralProgress(100);
+    flashNotice(`تم لصق ${sheet.rows.length} لوحة كإحالة`);
+    setPasteOpen(false);
   }
 
   async function handleRunSort() {
@@ -506,8 +621,8 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
       </Button>
 
       <SortSummaryCard
-        fileCount={(dataFile ? 1 : 0) + (referralFile ? 1 : 0)}
-        plateCount={result?.matchedRows.length ?? 0}
+        fileCount={library.length + (referralFile ? 1 : 0)}
+        plateCount={result?.matchedRows.length ?? totalPlateEstimate(library)}
         ready={canSort}
       >
         <p className="text-xs text-muted-foreground">
@@ -534,6 +649,67 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
               setDataProgress(null);
             }}
           />
+
+          <input
+            ref={appendInputRef}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void handleAppendFile(f);
+              e.target.value = "";
+            }}
+          />
+
+          {library.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <p className="text-[11px] text-muted-foreground">
+                للترتيب · المفتاح يفعّل/يوقف الفرز · الأزرار تحت كل ملف
+              </p>
+              {library.map((f) => (
+                <div key={f.id} className="rounded-xl border border-border bg-secondary/20 px-3 py-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1 text-right">
+                      <p className="truncate text-sm font-bold">{f.fileName}</p>
+                      <p className="text-[11px] text-muted-foreground">{f.rows.length} لوحات</p>
+                    </div>
+                    <label className="flex flex-col items-center gap-0.5">
+                      <input
+                        type="checkbox"
+                        checked={f.enabled}
+                        onChange={() => void toggleLibraryFile(f.id)}
+                        className="h-5 w-9 accent-primary"
+                      />
+                      <span className="text-[10px] font-bold text-muted-foreground">
+                        {f.enabled ? "فرز" : "خارج"}
+                      </span>
+                    </label>
+                  </div>
+                  <div className="mt-2 grid grid-cols-3 gap-1">
+                    <Button type="button" size="sm" variant="outline" onClick={() => requestAppend(f.id)}>
+                      <ArrowUpFromLine className="h-3.5 w-3.5" />
+                      إلحاق
+                    </Button>
+                    <Button type="button" size="sm" variant="outline" onClick={() => void downloadLibraryFile(f)}>
+                      <Download className="h-3.5 w-3.5" />
+                      تنزيل
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="text-destructive"
+                      onClick={() => void deleteLibraryFile(f.id)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      حذف
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           <div className="flex items-center gap-2">
             <Button size="sm" variant="secondary" className="shrink-0">
@@ -591,6 +767,45 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
           <CardTitle>ملف الإحالة</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
+
+          <div className="rounded-xl border border-dashed border-primary/40 p-3">
+            <button
+              type="button"
+              className="flex w-full items-center justify-between text-sm font-bold text-primary"
+              onClick={() => setPasteOpen((v) => !v)}
+            >
+              <span className="flex items-center gap-1">
+                <ClipboardPaste className="h-4 w-4" />
+                الصق هنا
+              </span>
+              <span className="text-[11px] font-normal text-muted-foreground">
+                {pasteOpen ? "إخفاء" : "لوحات نصية"}
+              </span>
+            </button>
+            {pasteOpen && (
+              <div className="mt-2 flex flex-col gap-2">
+                <textarea
+                  value={pasteText}
+                  onChange={(e) => setPasteText(e.target.value)}
+                  rows={6}
+                  placeholder={"سطر واحد لكل لوحة"}
+                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-right text-sm"
+                />
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" className="flex-1" onClick={() => setPasteText("")}>
+                    مسح الكل
+                  </Button>
+                  <Button type="button" className="flex-1" onClick={applyPastePlates}>
+                    تطبيق اللصق
+                  </Button>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  ارفع ملف الإحالة أو الصق اللوحات — سطر واحد لكل لوحة
+                </p>
+              </div>
+            )}
+          </div>
+
           <FileDropCard
             label="ملف الإحالة"
             file={referralFile}

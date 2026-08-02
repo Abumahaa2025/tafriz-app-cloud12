@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { loadLocal } from "@/lib/storage";
 import { SortResult } from "@/lib/sort-logic";
-import { googleMapsOpenUrl, osmBboxEmbedUrl, osmEmbedUrl } from "@/lib/map-coords";
+import { googleMapsOpenUrl } from "@/lib/map-coords";
+import { ClusterMap } from "@/components/ClusterMap";
 
 interface LastSortState {
   result: SortResult | null;
@@ -88,19 +89,34 @@ export default function MapsPage({ onBack }: { onBack?: () => void }) {
       r.lat != null && r.lng != null && Number.isFinite(r.lat) && Number.isFinite(r.lng)
   );
 
-  const mapSrc = React.useMemo(() => {
+  const clusterPoints = React.useMemo(() => {
     if (mode === "me" && myCoords) {
-      return osmEmbedUrl(myCoords.lat, myCoords.lng);
+      return [
+        {
+          id: "me",
+          lat: myCoords.lat,
+          lng: myCoords.lng,
+          label: "موقعي",
+          sub: `${myCoords.lat.toFixed(5)}, ${myCoords.lng.toFixed(5)}`,
+        },
+      ];
     }
+    return fleetPoints.map((r, i) => ({
+      id: `${r.plate}-${i}`,
+      lat: r.lat,
+      lng: r.lng,
+      label: r.plate,
+      sub: r.street || "",
+    }));
+  }, [mode, myCoords, fleetPoints]);
+
+  const focusPoint = React.useMemo(() => {
+    if (mode === "me" && myCoords) return myCoords;
     if (selected?.lat != null && selected?.lng != null) {
-      return osmEmbedUrl(selected.lat, selected.lng);
+      return { lat: selected.lat, lng: selected.lng };
     }
-    if (fleetPoints.length > 0) {
-      return osmBboxEmbedUrl(fleetPoints);
-    }
-    if (myCoords) return osmEmbedUrl(myCoords.lat, myCoords.lng);
     return null;
-  }, [mode, myCoords, selected, fleetPoints]);
+  }, [mode, myCoords, selected]);
 
   const withLocation = liveFleet.filter((r) => r.mapUrl || (r.lat != null && r.lng != null) || r.street).length;
 
@@ -140,9 +156,19 @@ export default function MapsPage({ onBack }: { onBack?: () => void }) {
         </button>
       </div>
 
-      {mapSrc ? (
+      {clusterPoints.length > 0 ? (
         <div className="overflow-hidden rounded-xl border border-border">
-          <iframe title="خريطة الأسطول" className="h-72 w-full" src={mapSrc} />
+          <ClusterMap
+            className="h-72 w-full"
+            points={clusterPoints}
+            focus={focusPoint}
+            onSelect={(id) => {
+              if (id === "me") return;
+              const plate = id.split("-")[0];
+              setSelectedPlate(plate);
+              setMode("fleet");
+            }}
+          />
         </div>
       ) : (
         <div className="flex h-64 flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-border text-muted-foreground">
@@ -155,6 +181,10 @@ export default function MapsPage({ onBack }: { onBack?: () => void }) {
           </span>
         </div>
       )}
+
+      <p className="text-center text-xs font-bold text-primary">
+        {fleetPoints.length} سيارة على الخريطة (تجميع دبابيس)
+      </p>
 
       <div className="flex gap-2">
         <Button variant="secondary" className="flex-1" onClick={locate}>
@@ -182,6 +212,15 @@ export default function MapsPage({ onBack }: { onBack?: () => void }) {
         )}
       </div>
 
+      <Button
+        className="w-full"
+        onClick={() => {
+          setMode("fleet");
+          setTick((t) => t + 1);
+        }}
+      >
+        عرض آخر نتيجة فرز
+      </Button>
       <p className="text-xs text-muted-foreground">
         من نتائج آخر فرز: {liveFleet.length} لوحة · {withLocation} لها موقع/وصف ·{" "}
         {fleetPoints.length} بإحداثيات مباشرة

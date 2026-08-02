@@ -8,9 +8,16 @@ import {
   Command,
   ExternalLink,
   CheckSquare,
+  MapPin,
+  MapPinned,
+  ChevronDown,
+  ChevronUp,
+  Zap,
+  Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { TabKey } from "@/components/BottomNav";
 import { MenuTarget } from "@/components/AppMenu";
 import { idbGet } from "@/lib/idb";
@@ -30,11 +37,31 @@ import {
   AppVoiceOverlay,
 } from "@/lib/app-voice";
 import { createSpeechPlateBuffer } from "@/lib/speech-plate";
+import {
+  loadFieldProfile,
+  saveFieldProfile,
+  profileReady,
+  MAX_RECORD_MS,
+  formatMmSs,
+  type FieldRecordingProfile,
+  type GpsPoint,
+} from "@/lib/field-recording";
+import {
+  dumpSessionToRows,
+  loadDumpRows,
+  saveDumpRows,
+  type FieldDumpRow,
+} from "@/lib/field-dump";
 
 interface Recording {
   id: string;
   url: string;
   createdAt: string;
+  street: string;
+  registrarName: string;
+  neighborhood: string;
+  points: GpsPoint[];
+  dumped: boolean;
 }
 
 export default function RecordPage({
@@ -66,7 +93,63 @@ export default function RecordPage({
   const plateBufRef = React.useRef(createSpeechPlateBuffer());
   const plateCommitRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [fieldProfile, setFieldProfile] = React.useState<FieldRecordingProfile>(() => loadFieldProfile());
+  const [basicOpen, setBasicOpen] = React.useState(false);
+  const [gpsPoints, setGpsPoints] = React.useState<GpsPoint[]>([]);
+  const [elapsedMs, setElapsedMs] = React.useState(0);
+  const [streetCoords, setStreetCoords] = React.useState<{ lat: number; lng: number } | null>(null);
+  const [dumpRows, setDumpRows] = React.useState<FieldDumpRow[]>([]);
+  const pendingPointsRef = React.useRef<GpsPoint[]>([]);
+  const recordStartedAt = React.useRef(0);
+  const maxTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tickTimerRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
+  const intervalTimerRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
+
+  function updateProfile(patch: Partial<FieldRecordingProfile>) {
+    setFieldProfile((prev) => {
+      const next = { ...prev, ...patch };
+      saveFieldProfile(next);
+      return next;
+    });
+  }
+
+  function clearGpsWatchers() {
+    if (intervalTimerRef.current) {
+      clearInterval(intervalTimerRef.current);
+      intervalTimerRef.current = null;
+    }
+    if (tickTimerRef.current) {
+      clearInterval(tickTimerRef.current);
+      tickTimerRef.current = null;
+    }
+    if (maxTimerRef.current) {
+      clearTimeout(maxTimerRef.current);
+      maxTimerRef.current = null;
+    }
+  }
+
+  function captureGpsPoint() {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const point = {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          at: new Date().toISOString(),
+        };
+        setGpsPoints((prev) => {
+          const next = [...prev, point];
+          pendingPointsRef.current = next;
+          return next;
+        });
+        setStreetCoords({ lat: point.lat, lng: point.lng });
+      },
+      () => setAudioError("تعذّر قراءة GPS — امنح إذن الموقع")
+    );
+  }
+
   React.useEffect(() => {
+    loadDumpRows().then((rows) => setDumpRows(rows)).catch(() => {});
     idbGet<CheckSheetData>(CHECK_IDB_KEY).then((saved) => {
       if (!saved?.rows?.length) return;
       setHasCheckFile(true);
@@ -78,6 +161,7 @@ export default function RecordPage({
       plateBufRef.current.reset();
       if (tipTimer.current) clearTimeout(tipTimer.current);
       if (plateCommitRef.current) clearTimeout(plateCommitRef.current);
+      clearGpsWatchers();
     };
   }, []);
 
@@ -176,7 +260,6 @@ export default function RecordPage({
       }
     }
 
-    // تجميع بالترتيب: 12 ثم 35 → 1235 — والبحث بعد توقف قصير حتى لا يُلتقط 10 قبل 20
     const ranked = plateBufRef.current.ingest([transcript]);
     const assembled = plateBufRef.current.value || ranked[0] || "";
     if (assembled) setInterim(assembled);
@@ -217,23 +300,56 @@ export default function RecordPage({
 
   async function startRecording() {
     setAudioError(null);
+    if (!profileReady(fieldProfile)) {
+      setAudioError("أكمل اسم المسجّل والحي واسم الشارع قبل التسجيل");
+      setBasicOpen(true);
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const recorder = new MediaRecorder(stream);
       chunksRef.current = [];
+      setGpsPoints([]);
+      pendingPointsRef.current = [];
+      recordStartedAt.current = Date.now();
+      setElapsedMs(0);
       recorder.ondataavailable = (e) => chunksRef.current.push(e.data);
       recorder.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: "audio/webm" });
         const url = URL.createObjectURL(blob);
+        const pointsSnapshot = pendingPointsRef.current.slice();
         setRecordings((prev) => [
-          { id: crypto.randomUUID(), url, createdAt: new Date().toLocaleTimeString("ar-SA") },
+          {
+            id: crypto.randomUUID(),
+            url,
+            createdAt: new Date().toLocaleTimeString("ar-SA"),
+            street: fieldProfile.street,
+            registrarName: fieldProfile.registrarName,
+            neighborhood: fieldProfile.neighborhood,
+            points: pointsSnapshot,
+            dumped: false,
+          },
           ...prev,
         ]);
         stream.getTracks().forEach((t) => t.stop());
+        clearGpsWatchers();
+        setElapsedMs(0);
+        pendingPointsRef.current = [];
       };
       recorder.start();
       mediaRecorderRef.current = recorder;
       setRecording(true);
+      captureGpsPoint();
+      tickTimerRef.current = setInterval(() => {
+        setElapsedMs(Date.now() - recordStartedAt.current);
+      }, 250);
+      maxTimerRef.current = setTimeout(() => stopRecording(), MAX_RECORD_MS);
+      if (fieldProfile.gpsMode === "auto") {
+        intervalTimerRef.current = setInterval(
+          () => captureGpsPoint(),
+          fieldProfile.intervalSec * 1000
+        );
+      }
     } catch {
       setAudioError("تعذّر الوصول للمايكروفون — تأكد من منح الإذن للمتصفح");
     }
@@ -242,11 +358,86 @@ export default function RecordPage({
   function stopRecording() {
     mediaRecorderRef.current?.stop();
     setRecording(false);
+    clearGpsWatchers();
+  }
+
+
+  async function dumpRecording(rec: Recording) {
+    if (rec.dumped) {
+      showNotice("هذا التسجيل مفرّغ مسبقًا");
+      return;
+    }
+    const rows = dumpSessionToRows({
+      registrarName: rec.registrarName,
+      neighborhood: rec.neighborhood,
+      street: rec.street,
+      points: rec.points,
+    });
+    const next = [...rows, ...dumpRows];
+    setDumpRows(next);
+    await saveDumpRows(next);
+    setRecordings((prev) => prev.map((r) => (r.id === rec.id ? { ...r, dumped: true } : r)));
+    showNotice(`تم التفريغ: ${rows.length} صف`);
+  }
+
+  async function dumpAllPending() {
+    const pending = recordings.filter((r) => !r.dumped);
+    if (pending.length === 0) {
+      showNotice("لا توجد ملفات معلّقة للتفريغ");
+      return;
+    }
+    const added: FieldDumpRow[] = [];
+    for (const rec of [...pending].reverse()) {
+      added.push(
+        ...dumpSessionToRows({
+          registrarName: rec.registrarName,
+          neighborhood: rec.neighborhood,
+          street: rec.street,
+          points: rec.points,
+        })
+      );
+    }
+    const next = [...added, ...dumpRows];
+    setDumpRows(next);
+    await saveDumpRows(next);
+    setRecordings((prev) => prev.map((r) => ({ ...r, dumped: true })));
+    showNotice(`تفريغ كل المعلق: ${added.length} صف من ${pending.length} تسجيل`);
+  }
+
+  async function clearDumpTable() {
+    setDumpRows([]);
+    await saveDumpRows([]);
+    showNotice("تم مسح جدول البيانات");
+  }
+
+  function exportDumpTable() {
+    if (dumpRows.length === 0) {
+      showNotice("الجدول فارغ");
+      return;
+    }
+    const header = ["رقم اللوحة", "ملاحظات", "نوع السيارة", "اسم المسجل", "الشارع", "الحي", "GPS", "تاريخ التسجيل"];
+    const lines = [header.join(",")];
+    for (const r of dumpRows) {
+      lines.push(
+        [r.plate, r.notes, r.carType, r.registrarName, r.street, r.neighborhood, r.gps, r.recordedAt]
+          .map((c) => `"${String(c).replace(/"/g, '""')}"`)
+          .join(",")
+      );
+    }
+    const csv = "\uFEFF" + lines.join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `nuskha-tasjeel-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   const mapHref = found?.mapUrl
     ? googleMapsOpenUrl({ mapUrl: found.mapUrl, query: found.gps || found.plate })
     : null;
+  const ready = profileReady(fieldProfile);
 
   return (
     <div className="mx-auto flex max-w-md flex-col gap-4 px-4 pb-28 pt-4">
@@ -256,120 +447,321 @@ export default function RecordPage({
             <ArrowRight className="h-5 w-5" />
           </button>
         )}
-        <Command className="h-5 w-5 text-primary" />
-        <h1 className="text-lg font-black">الأوامر الصوتية</h1>
+        <Mic className="h-5 w-5 text-primary" />
+        <h1 className="text-lg font-black">التسجيل</h1>
       </header>
 
-      <p className="text-xs text-muted-foreground">
-        أوامر شاملة للتطبيق بالكامل: تنقّل بين الصفحات، فتح الحساب وقاعدة البيانات، وفحص اللوحات
-        مباشرة — أقوى من أمر صوت التشيك.
-      </p>
-
-      <Button
-        size="lg"
-        variant={listening ? "destructive" : "default"}
-        onClick={listening ? stopListening : startListening}
+      <button
+        type="button"
+        onClick={() => setBasicOpen((v) => !v)}
+        className="flex w-full items-center justify-between rounded-xl border border-border bg-card px-3 py-3 text-right"
       >
-        {listening ? <Square className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
-        {listening ? "إيقاف الأوامر" : "ابدأ الأوامر الصوتية"}
-      </Button>
+        <span className="text-sm font-bold">بيانات التسجيل الأساسية</span>
+        {basicOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+      </button>
 
-      {listening && (
-        <p className="text-center text-xs text-muted-foreground">
-          {interim ? "يسمع: " + interim : "استمع… قل أمرًا أو رقم لوحة (يتوقف عند التنفيذ)"}
-        </p>
-      )}
-
-      {notice && (
-        <div
-          role="status"
-          className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-center text-sm font-medium text-amber-900 dark:text-amber-100"
-        >
-          {notice}
-        </div>
-      )}
-
-      {lastHeard && (
-        <p className="text-center text-[11px] text-muted-foreground">آخر أمر: {lastHeard}</p>
-      )}
-
-      {found && (
-        <Card className="border-primary/30">
-          <CardHeader className="flex-row items-center justify-between space-y-0 py-3">
-            <CheckSquare className="h-4 w-4 text-primary" />
-            <CardTitle className="text-sm">نتيجة الفحص الصوتي</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2 text-sm">
-            <div className="flex justify-between gap-2">
-              <span className="font-black text-primary">{found.plate}</span>
-              <span className="text-xs text-muted-foreground">لوحة</span>
-            </div>
-            {found.gps ? (
-              <p className="break-all text-xs text-muted-foreground">{found.gps}</p>
-            ) : (
-              <p className="text-xs text-muted-foreground">لا يوجد رابط خريطة لهذه اللوحة</p>
-            )}
-            {mapHref && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => window.open(mapHref, "_blank", "noopener,noreferrer")}
-              >
-                <ExternalLink className="h-4 w-4" />
-                فتح الخريطة
-              </Button>
-            )}
+      {basicOpen && (
+        <Card>
+          <CardContent className="flex flex-col gap-2 pt-4">
+            <Input
+              placeholder="اسم المسجّل"
+              value={fieldProfile.registrarName}
+              onChange={(e) => updateProfile({ registrarName: e.target.value })}
+              className="text-right"
+            />
+            <Input
+              placeholder="الحي"
+              value={fieldProfile.neighborhood}
+              onChange={(e) => updateProfile({ neighborhood: e.target.value })}
+              className="text-right"
+            />
+            <Input
+              placeholder="الشارع"
+              value={fieldProfile.street}
+              onChange={(e) => updateProfile({ street: e.target.value })}
+              className="text-right"
+            />
           </CardContent>
         </Card>
       )}
 
+      <div className="flex items-center justify-between text-xs">
+        <span
+          className={`rounded-full px-2 py-1 font-bold ${
+            ready ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"
+          }`}
+        >
+          {ready ? "جاهز للتسجيل" : "أكمل الإعدادات"}
+        </span>
+        <span className="text-muted-foreground">الحد الأقصى 5 دقائق</span>
+      </div>
+
       <Card>
         <CardHeader className="py-3">
-          <CardTitle className="text-sm">أمثلة أوامر</CardTitle>
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <Mic className="h-4 w-4 text-primary" />
+            التسجيل الصوتي
+          </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-1 text-xs text-muted-foreground">
-          <p>• افتح الفرز / افتح التشيك / افتح الخرائط</p>
-          <p>• قاعدة البيانات / الحساب / المسح الذكي</p>
-          <p>• انطق رقم أو حروف اللوحة للفحص مباشرة</p>
-          <p>• تسجيل صوت — لبدء تسجيل عادي</p>
-          <p>• مساعدة — لعرض القائمة</p>
+        <CardContent className="flex flex-col items-center gap-3">
+          {recording && (
+            <div className="w-full text-center">
+              <p className="font-black tabular-nums">
+                {formatMmSs(elapsedMs)} / {formatMmSs(MAX_RECORD_MS)}
+              </p>
+              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full bg-primary transition-all"
+                  style={{ width: `${Math.min(100, (elapsedMs / MAX_RECORD_MS) * 100)}%` }}
+                />
+              </div>
+            </div>
+          )}
+          <div className="flex items-center gap-4">
+            <button
+              type="button"
+              disabled={!recording || fieldProfile.gpsMode !== "manual"}
+              onClick={captureGpsPoint}
+              className="flex flex-col items-center gap-1 rounded-xl border border-border px-3 py-2 disabled:opacity-40"
+            >
+              <MapPin className="h-5 w-5 text-destructive" />
+              <span className="text-[10px] font-bold">دبوس GPS</span>
+            </button>
+            <button
+              type="button"
+              onClick={recording ? stopRecording : () => void startRecording()}
+              disabled={listening}
+              className={`flex h-20 w-20 items-center justify-center rounded-full border-4 ${
+                recording
+                  ? "border-destructive bg-destructive text-white"
+                  : "border-primary bg-primary text-primary-foreground"
+              }`}
+            >
+              {recording ? <Square className="h-7 w-7" /> : <span className="h-6 w-6 rounded-full bg-white" />}
+            </button>
+            <div className="flex min-w-[4.5rem] flex-col items-center gap-1 rounded-xl border border-border px-2 py-2">
+              <MapPinned className="h-4 w-4 text-primary" />
+              <span className="text-[10px] font-bold">{gpsPoints.length} نقطة</span>
+            </div>
+          </div>
+          <p className="text-center text-[11px] text-muted-foreground">
+            {recording ? "إيقاف" : "تسجيل"} · في الوضع اليدوي استخدم دبوس الموقع أثناء التسجيل
+          </p>
         </CardContent>
       </Card>
 
-      <div className="border-t border-border pt-3">
-        <p className="mb-2 text-xs font-bold text-muted-foreground">تسجيل صوتي عادي</p>
-        <Button
-          size="lg"
-          variant={recording ? "destructive" : "outline"}
-          className="w-full"
-          onClick={recording ? stopRecording : startRecording}
-          disabled={listening}
-        >
-          {recording ? <Square className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
-          {recording ? "إيقاف التسجيل" : "بدء تسجيل جديد"}
-        </Button>
-        {audioError && <p className="mt-2 text-xs text-destructive">{audioError}</p>}
+      <Card>
+        <CardHeader className="py-3">
+          <CardTitle className="text-sm">الشارع الحالي</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          <Input
+            placeholder="مطلوب قبل التسجيل"
+            value={fieldProfile.street}
+            onChange={(e) => updateProfile({ street: e.target.value })}
+            className="text-right"
+          />
+          {streetCoords && (
+            <p className="text-[11px] text-muted-foreground">
+              موقع الشارع — {streetCoords.lat.toFixed(6)}, {streetCoords.lng.toFixed(6)}
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
-        <div className="mt-3 flex flex-col gap-2">
+      <Card>
+        <CardHeader className="py-3">
+          <CardTitle className="text-sm">تتبع الموقع (GPS)</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              type="button"
+              variant={fieldProfile.gpsMode === "auto" ? "default" : "outline"}
+              onClick={() => updateProfile({ gpsMode: "auto" })}
+            >
+              تلقائي
+            </Button>
+            <Button
+              type="button"
+              variant={fieldProfile.gpsMode === "manual" ? "default" : "outline"}
+              onClick={() => updateProfile({ gpsMode: "manual" })}
+            >
+              يدوي
+            </Button>
+          </div>
+          <label className="text-xs text-muted-foreground">الفترة بين النقاط (ثانية)</label>
+          <select
+            className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+            value={fieldProfile.intervalSec}
+            onChange={(e) =>
+              updateProfile({
+                intervalSec: Number(e.target.value) as FieldRecordingProfile["intervalSec"],
+              })
+            }
+          >
+            <option value={5}>5 ثانية</option>
+            <option value={10}>10 ثانية</option>
+            <option value={15}>15 ثانية</option>
+            <option value={30}>30 ثانية</option>
+          </select>
+        </CardContent>
+      </Card>
+
+      {audioError && <p className="text-xs text-destructive">{audioError}</p>}
+
+      <div className="border-t border-border pt-3">
+        <p className="mb-2 text-xs font-bold text-muted-foreground">قائمة التسجيلات</p>
+        <div className="flex flex-col gap-2">
           {recordings.length === 0 && (
             <p className="text-center text-sm text-muted-foreground">لا توجد تسجيلات بعد</p>
           )}
           {recordings.map((r) => (
-            <div key={r.id} className="flex items-center gap-2 rounded-xl border border-border px-3 py-2">
-              <button
-                onClick={() => setRecordings((prev) => prev.filter((x) => x.id !== r.id))}
-                className="text-muted-foreground hover:text-destructive"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
-              <audio controls src={r.url} className="h-8 flex-1" />
-              <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Play className="h-3 w-3" />
-                {r.createdAt}
-              </span>
+            <div key={r.id} className="flex flex-col gap-2 rounded-xl border border-border px-3 py-2">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setRecordings((prev) => prev.filter((x) => x.id !== r.id))}
+                  className="text-muted-foreground hover:text-destructive"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+                <audio controls src={r.url} className="h-8 flex-1" />
+                <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <Play className="h-3 w-3" />
+                  {r.createdAt}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                <span>{r.street || "بدون شارع"} · {r.points.length} نقطة</span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={r.dumped ? "outline" : "default"}
+                  disabled={r.dumped}
+                  onClick={() => void dumpRecording(r)}
+                >
+                  <Zap className="h-3.5 w-3.5" />
+                  {r.dumped ? "مفرّغ" : "تفريغ"}
+                </Button>
+              </div>
             </div>
           ))}
         </div>
+      </div>
+
+      <Button type="button" variant="secondary" className="w-full" onClick={() => void dumpAllPending()}>
+        <Zap className="h-4 w-4" />
+        تفريغ كل الملفات المعلقة بالترتيب
+      </Button>
+
+      <Card>
+        <CardHeader className="flex-row items-center justify-between space-y-0 py-3">
+          <div className="flex items-center gap-2">
+            <Button type="button" size="sm" variant="outline" onClick={exportDumpTable}>
+              <Download className="h-3.5 w-3.5" />
+            </Button>
+            <Button type="button" size="sm" variant="outline" className="text-destructive" onClick={() => void clearDumpTable()}>
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+          <CardTitle className="text-sm">جدول البيانات · {dumpRows.length} لوحة</CardTitle>
+        </CardHeader>
+        <CardContent className="max-h-64 overflow-auto">
+          {dumpRows.length === 0 ? (
+            <p className="text-center text-xs text-muted-foreground">لا صفوف بعد — سجّل ثم اضغط تفريغ</p>
+          ) : (
+            <table className="w-full text-right text-[11px]">
+              <thead>
+                <tr className="border-b border-border text-muted-foreground">
+                  <th className="py-1">اللوحة</th>
+                  <th className="py-1">الشارع</th>
+                  <th className="py-1">GPS</th>
+                  <th className="py-1">المسجّل</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dumpRows.slice(0, 80).map((r) => (
+                  <tr key={r.id} className="border-b border-border/60">
+                    <td className="py-1 font-bold text-primary">{r.plate || "—"}</td>
+                    <td className="py-1">{r.street || "—"}</td>
+                    <td className="py-1 font-mono text-[10px]">{r.gps}</td>
+                    <td className="py-1">{r.registrarName || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </CardContent>
+      </Card>
+
+      <div className="border-t border-border pt-3">
+        <header className="mb-2 flex items-center gap-2">
+          <Command className="h-4 w-4 text-primary" />
+          <h2 className="text-sm font-black">الأوامر الصوتية</h2>
+        </header>
+        <p className="mb-2 text-xs text-muted-foreground">
+          أوامر شاملة: تنقّل، فتح الصفحات، وفحص اللوحات صوتًا — محفوظة كما أنجزناها.
+        </p>
+
+        <Button
+          size="lg"
+          variant={listening ? "destructive" : "default"}
+          className="w-full"
+          onClick={listening ? stopListening : startListening}
+          disabled={recording}
+        >
+          {listening ? <Square className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+          {listening ? "إيقاف الأوامر" : "ابدأ الأوامر الصوتية"}
+        </Button>
+
+        {listening && (
+          <p className="mt-2 text-center text-xs text-muted-foreground">
+            {interim ? "يسمع: " + interim : "استمع… قل أمرًا أو رقم لوحة"}
+          </p>
+        )}
+
+        {notice && (
+          <div
+            role="status"
+            className="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-center text-sm font-medium text-amber-900 dark:text-amber-100"
+          >
+            {notice}
+          </div>
+        )}
+
+        {lastHeard && (
+          <p className="mt-1 text-center text-[11px] text-muted-foreground">آخر أمر: {lastHeard}</p>
+        )}
+
+        {found && (
+          <Card className="mt-2 border-primary/30">
+            <CardHeader className="flex-row items-center justify-between space-y-0 py-3">
+              <CheckSquare className="h-4 w-4 text-primary" />
+              <CardTitle className="text-sm">نتيجة الفحص الصوتي</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-2 text-sm">
+              <div className="flex justify-between gap-2">
+                <span className="font-black text-primary">{found.plate}</span>
+                <span className="text-xs text-muted-foreground">لوحة</span>
+              </div>
+              {found.gps ? (
+                <p className="break-all text-xs text-muted-foreground">{found.gps}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">لا يوجد رابط خريطة لهذه اللوحة</p>
+              )}
+              {mapHref && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => window.open(mapHref, "_blank", "noopener,noreferrer")}
+                >
+                  <ExternalLink className="h-4 w-4" />
+                  فتح الخريطة
+                </Button>
+              )}
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );
