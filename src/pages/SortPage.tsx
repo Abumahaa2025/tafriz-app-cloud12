@@ -273,14 +273,19 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
     return result.matchedRows.map((r) => r.plate).join("\n");
   }
 
-  function buildResultsExcelFile(): File | null {
+  function resultsTableRows() {
     if (!result || result.matchedRows.length === 0) return null;
-    const table = result.matchedRows.map((r, i) => ({
+    return result.matchedRows.map((r, i) => ({
       "#": i + 1,
       "رقم اللوحة": r.plate,
       الشارع: r.street || "",
       "رابط الخريطة": r.mapUrl || "",
     }));
+  }
+
+  function buildResultsExcelFile(): File | null {
+    const table = resultsTableRows();
+    if (!table) return null;
     const ws = XLSX.utils.json_to_sheet(table);
     ws["!cols"] = [{ wch: 6 }, { wch: 18 }, { wch: 36 }, { wch: 40 }];
     const wb = XLSX.utils.book_new();
@@ -292,8 +297,20 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
     });
   }
 
+  /** CSV يفتح قائمة مشاركة أندرويد بثبات، ويفتح كجدول في Sheets/Excel */
+  function buildResultsCsvFile(): File | null {
+    const table = resultsTableRows();
+    if (!table) return null;
+    const ws = XLSX.utils.json_to_sheet(table);
+    const csv = XLSX.utils.sheet_to_csv(ws);
+    const stamp = new Date().toISOString().slice(0, 10);
+    // BOM عشان العربية تظهر صحيحة في Excel
+    return new File(["\uFEFF" + csv], `نتائج-الفرز-${stamp}.csv`, {
+      type: "text/csv;charset=utf-8",
+    });
+  }
+
   async function shareExcelNative(file: File, title: string): Promise<boolean> {
-    if (!Capacitor.isNativePlatform()) return false;
     try {
       const { Filesystem, Directory } = await import("@capacitor/filesystem");
       const { Share } = await import("@capacitor/share");
@@ -317,39 +334,56 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
     }
   }
 
+  async function tryShareFiles(files: File[], title: string): Promise<"shared" | "abort" | "fail"> {
+    const nav = navigator as NavShare;
+    if (!nav.share) return "fail";
+    for (const file of files) {
+      try {
+        // لا نوقف المحاولة لو canShare رفض النوع — بعض أجهزة أندرويد ترفض xlsx ثم تقبل csv
+        if (nav.canShare && !nav.canShare({ files: [file] })) continue;
+        await nav.share({ files: [file], title });
+        return "shared";
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") return "abort";
+      }
+    }
+    // محاولة أخيرة بدون فحص canShare (إيماءة المستخدم ما زالت قريبة)
+    try {
+      await nav.share({ files: [files[0]], title });
+      return "shared";
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return "abort";
+      return "fail";
+    }
+  }
+
   async function handleShareResults() {
-    const file = buildResultsExcelFile();
-    if (!file) {
+    // مهم: بناء الملفات بشكل متزامن ثم استدعاء share فورًا دون await سابق
+    // حتى لا تضيع "إيماءة المستخدم" ويفشل فتح قائمة التطبيقات
+    const xlsxFile = buildResultsExcelFile();
+    const csvFile = buildResultsCsvFile();
+    if (!xlsxFile || !csvFile) {
       flashNotice("لا توجد نتائج لمشاركتها");
       return;
     }
     const title = "نتائج الفرز";
 
-    if (await shareExcelNative(file, title)) {
-      flashNotice("تم فتح مشاركة ملف Excel");
-      return;
+    if (Capacitor.isNativePlatform()) {
+      if (await shareExcelNative(xlsxFile, title)) return;
     }
 
-    const nav = navigator as NavShare;
-    if (nav.share) {
-      if (nav.canShare?.({ files: [file] })) {
-        try {
-          await nav.share({ files: [file], title });
-          return;
-        } catch (err) {
-          if (err instanceof Error && err.name === "AbortError") return;
-        }
-      }
-    }
+    // على الويب/TWA: csv أولًا لأنه مدعوم في قائمة مشاركة أندرويد، ثم xlsx
+    const shareResult = await tryShareFiles([csvFile, xlsxFile], title);
+    if (shareResult === "shared" || shareResult === "abort") return;
 
-    // احتياطي: تنزيل ملف Excel منظم
-    const url = URL.createObjectURL(file);
+    // احتياطي أخير فقط إذا نظام الجهاز لا يدعم مشاركة الملفات
+    const url = URL.createObjectURL(xlsxFile);
     const a = document.createElement("a");
     a.href = url;
-    a.download = file.name;
+    a.download = xlsxFile.name;
     a.click();
     URL.revokeObjectURL(url);
-    flashNotice("تم تنزيل ملف Excel");
+    flashNotice("الجهاز لا يدعم قائمة المشاركة — تم تنزيل Excel");
   }
 
   async function handleCopyAll() {
