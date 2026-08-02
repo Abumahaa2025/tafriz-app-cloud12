@@ -247,15 +247,38 @@ export const supabaseBackend: Backend = {
   },
 
   async signIn(identifierType, identifier, password) {
+    const pwd = String(password ?? "");
+    if (!pwd.trim()) {
+      throw new BackendError("bad_password", "يرجى إدخال كلمة المرور");
+    }
+
     const db = requireClient();
+    // امسح أي جلسة سابقة حتى لا يُعاد فتح الحساب بدون التحقق من كلمة المرور
+    try {
+      await db.auth.signOut({ scope: "local" });
+    } catch {
+      // ignore
+    }
+
     let lastErr = "البريد/الجوال أو كلمة المرور غير صحيحة";
 
     for (const email of authEmailCandidates(identifierType, identifier)) {
-      const { data, error } = await db.auth.signInWithPassword({ email, password });
+      const { data, error } = await db.auth.signInWithPassword({ email, password: pwd });
       if (!error && data.user) {
-        // إن وُجدت جلسة بدون صف في profiles نُنشئه الآن (حالات signup الناقصة)
         const existing = await this.getCurrentUser();
-        if (existing) return existing;
+        if (existing) {
+          // تأكيد أن الجلسة للحساب الذي أدخله المستخدم وليس جلسة قديمة
+          const idNorm = identifierType === "email" ? identifier.trim().toLowerCase() : identifier.trim();
+          const ok =
+            existing.identifier === identifier.trim() ||
+            existing.identifier === idNorm ||
+            existing.identifier.replace(/\D/g, "") === identifier.replace(/\D/g, "");
+          if (!ok) {
+            await db.auth.signOut({ scope: "local" });
+            throw new BackendError("bad_password", "البريد/الجوال أو كلمة المرور غير صحيحة");
+          }
+          return existing;
+        }
         return ensureProfile(db, data.user.id, identifierType, identifier);
       }
       if (error) lastErr = error.message;

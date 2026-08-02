@@ -111,10 +111,14 @@ export const localBackend: Backend = {
 
 
   async signIn(identifierType, identifier, password) {
+    const pwd = String(password ?? "");
+    if (!pwd.trim()) {
+      throw new BackendError("bad_password", "يرجى إدخال كلمة المرور");
+    }
     const users = readUsers();
     const user = users.find((u) => u.identifierType === identifierType && u.identifier === identifier);
     if (!user) throw new BackendError("not_found", "لا يوجد حساب بهذه البيانات");
-    if (user.password !== password) throw new BackendError("bad_password", "كلمة المرور غير صحيحة");
+    if (user.password !== pwd) throw new BackendError("bad_password", "كلمة المرور غير صحيحة");
     saveLocal(SESSION_KEY, user.id);
     writeUsers(users.map((u) => (u.id === user.id ? { ...u, lastSeenAt: new Date().toISOString() } : u)));
     return strip({ ...user, lastSeenAt: new Date().toISOString() });

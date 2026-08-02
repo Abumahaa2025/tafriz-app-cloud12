@@ -19,6 +19,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useAuth } from "@/context/AuthContext";
 import { IdentifierType, BackendError } from "@/lib/backend-types";
 import { getSupportPhones } from "@/lib/support-contact";
+import { backend } from "@/lib/backend";
 import {
   assessPasswordStrength,
   isPasswordAcceptable,
@@ -46,11 +47,17 @@ export default function LoginPage() {
 
   const primaryPhone = getSupportPhones()[0]?.phone;
 
+  // عند ظهور شاشة الدخول: امسح أي جلسة شبح حتى لا يُفتح الحساب بالبريد فقط
+  React.useEffect(() => {
+    backend.signOut().catch(() => {});
+  }, []);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
 
     const trimmedId = identifier.trim();
+    const pwd = password;
     const idLabel = idType === "email" ? "البريد الإلكتروني" : "رقم الجوال";
 
     if (mode === "signup" && !fullName.trim()) {
@@ -61,15 +68,15 @@ export default function LoginPage() {
       setError(`يرجى إدخال ${idLabel}`);
       return;
     }
-    if (mode === "signup" && !isPasswordAcceptable(password)) {
+    if (mode === "signup" && !isPasswordAcceptable(pwd)) {
       setError(PASSWORD_RULE_HINT);
       return;
     }
-    if (mode === "signin" && password.length < 1) {
+    if (mode === "signin" && !pwd.trim()) {
       setError("يرجى إدخال كلمة المرور");
       return;
     }
-    if (mode === "signup" && password !== confirmPassword) {
+    if (mode === "signup" && pwd !== confirmPassword) {
       setError("كلمتا المرور غير متطابقتين");
       return;
     }
@@ -77,9 +84,9 @@ export default function LoginPage() {
     setBusy(true);
     try {
       if (mode === "signup") {
-        await signUp(idType, trimmedId, password, { fullName: fullName.trim(), city: city.trim() });
+        await signUp(idType, trimmedId, pwd, { fullName: fullName.trim(), city: city.trim() });
       } else {
-        await signIn(idType, trimmedId, password);
+        await signIn(idType, trimmedId, pwd);
       }
     } catch (err) {
       setError(err instanceof BackendError ? err.message : "حدث خطأ غير متوقع");
@@ -236,6 +243,8 @@ export default function LoginPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   className="pl-10 pr-10 text-right"
                   dir="ltr"
+                  required={mode === "signin"}
+                  autoComplete={mode === "signin" ? "current-password" : "new-password"}
                 />
                 <button
                   type="button"
