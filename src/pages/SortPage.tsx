@@ -11,13 +11,14 @@ import { StatPill } from "@/components/StatPill";
 import { ResultsTable } from "@/components/ResultsTable";
 import { ImportExportBar } from "@/components/ImportExportBar";
 import { AppMenu, MenuTarget } from "@/components/AppMenu";
+import * as XLSX from "xlsx";
+import { Capacitor } from "@capacitor/core";
 import { parseSpreadsheet, guessColumn, ParsedSheet } from "@/lib/xlsx-utils";
 import { runSortChunked, SortResult } from "@/lib/sort-logic";
 import { loadLocal, saveLocal } from "@/lib/storage";
 import { idbGet, idbRemove, idbSet } from "@/lib/idb";
 import { consumeSharedFile } from "@/lib/shared-file";
 import { listenForNativeSharedFile } from "@/lib/native-import";
-import { nativeShareText } from "@/lib/native-share";
 import { backend } from "@/lib/backend";
 import { useAuth } from "@/context/AuthContext";
 
@@ -272,45 +273,83 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
     return result.matchedRows.map((r) => r.plate).join("\n");
   }
 
+  function buildResultsExcelFile(): File | null {
+    if (!result || result.matchedRows.length === 0) return null;
+    const table = result.matchedRows.map((r, i) => ({
+      "#": i + 1,
+      "رقم اللوحة": r.plate,
+      الشارع: r.street || "",
+      "رابط الخريطة": r.mapUrl || "",
+    }));
+    const ws = XLSX.utils.json_to_sheet(table);
+    ws["!cols"] = [{ wch: 6 }, { wch: 18 }, { wch: 36 }, { wch: 40 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "نتائج الفرز");
+    const bytes = XLSX.write(wb, { bookType: "xlsx", type: "array" }) as number[];
+    const stamp = new Date().toISOString().slice(0, 10);
+    return new File([new Uint8Array(bytes)], `نتائج-الفرز-${stamp}.xlsx`, {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+  }
+
+  async function shareExcelNative(file: File, title: string): Promise<boolean> {
+    if (!Capacitor.isNativePlatform()) return false;
+    try {
+      const { Filesystem, Directory } = await import("@capacitor/filesystem");
+      const { Share } = await import("@capacitor/share");
+      const buf = new Uint8Array(await file.arrayBuffer());
+      let binary = "";
+      const chunk = 0x8000;
+      for (let i = 0; i < buf.length; i += chunk) {
+        binary += String.fromCharCode(...buf.subarray(i, i + chunk));
+      }
+      const base64 = btoa(binary);
+      await Filesystem.writeFile({
+        path: file.name,
+        data: base64,
+        directory: Directory.Cache,
+      });
+      const { uri } = await Filesystem.getUri({ path: file.name, directory: Directory.Cache });
+      await Share.share({ title, url: uri, dialogTitle: title });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async function handleShareResults() {
-    const text = buildResultsText();
-    if (!text) {
+    const file = buildResultsExcelFile();
+    if (!file) {
       flashNotice("لا توجد نتائج لمشاركتها");
       return;
     }
-    const fileName = "نتائج-الفرز.txt";
     const title = "نتائج الفرز";
 
-    const usedNativeShare = await nativeShareText(fileName, text, title);
-    if (usedNativeShare) return;
+    if (await shareExcelNative(file, title)) {
+      flashNotice("تم فتح مشاركة ملف Excel");
+      return;
+    }
 
-    const file = new File([text], fileName, { type: "text/plain" });
     const nav = navigator as NavShare;
-
     if (nav.share) {
       if (nav.canShare?.({ files: [file] })) {
         try {
-          await nav.share({ files: [file], title, text });
+          await nav.share({ files: [file], title });
           return;
         } catch (err) {
           if (err instanceof Error && err.name === "AbortError") return;
         }
       }
-      try {
-        await nav.share({ title, text });
-        return;
-      } catch (err) {
-        if (err instanceof Error && err.name === "AbortError") return;
-      }
     }
 
-    // احتياطي: نسخ النص إن لم تتوفر قائمة مشاركة
-    try {
-      await navigator.clipboard?.writeText(text);
-      flashNotice("تم نسخ النتائج — الصقها في أي تطبيق");
-    } catch {
-      flashNotice("تعذّرت المشاركة على هذا الجهاز");
-    }
+    // احتياطي: تنزيل ملف Excel منظم
+    const url = URL.createObjectURL(file);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = file.name;
+    a.click();
+    URL.revokeObjectURL(url);
+    flashNotice("تم تنزيل ملف Excel");
   }
 
   async function handleCopyAll() {
