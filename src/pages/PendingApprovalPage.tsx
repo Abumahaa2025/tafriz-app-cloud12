@@ -153,7 +153,7 @@ export default function PendingApprovalPage() {
   async function handleRedeemCode() {
     setCodeError(null);
     if (!code.trim()) {
-      setCodeError("يرجى إدخال رمز التفعيل الذي أرسله المالك");
+      setCodeError("يرجى إدخال رمز التفعيل الذي أرسلته الإدارة");
       return;
     }
     setRedeemBusy(true);
@@ -234,7 +234,7 @@ export default function PendingApprovalPage() {
         <Card className="w-full text-right">
           <CardContent className="flex flex-col gap-3 pt-4">
             <p className="text-xs text-muted-foreground">
-              أرسل طلبك مباشرة للمالك داخل التطبيق — يصل إلى «إدارة التحكم ▸ الملاحظات».
+              أرسل طلبك مباشرة للإدارة داخل التطبيق — يصل إلى «إدارة التحكم ▸ الملاحظات».
             </p>
 
             <div className="flex flex-wrap gap-2">
@@ -307,13 +307,13 @@ export default function PendingApprovalPage() {
         className="flex items-center gap-1.5 text-xs font-bold text-muted-foreground"
       >
         <KeyRound className="h-3.5 w-3.5" />
-        {showCodeBox ? "إخفاء إدخال الرمز" : "إدخال رمز التفعيل من المالك"}
+        {showCodeBox ? "إخفاء إدخال الرمز" : "إدخال رمز التفعيل من الإدارة"}
       </button>
 
       {showCodeBox && (
         <div className="flex w-full flex-col gap-2">
           <Input
-            placeholder="الصق الرمز الذي أرسله المالك"
+            placeholder="الصق الرمز الذي أرسلته الإدارة"
             value={code}
             onChange={(e) => setCode(e.target.value)}
             className="text-center"

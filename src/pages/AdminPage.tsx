@@ -173,7 +173,7 @@ export default function AdminPage({ onBack }: { onBack?: () => void }) {
                   </p>
                 )}
                 <p className="text-xs text-muted-foreground">
-                  {u.isOwner ? "مالك التطبيق" : u.packageName ? `الباقة: ${u.packageName}` : "بدون باقة بعد"}
+                  {u.isOwner ? "إدارة التطبيق" : u.packageName ? `الباقة: ${u.packageName}` : "بدون باقة بعد"}
                 </p>
                 <p className="flex items-center gap-1 text-xs text-muted-foreground">
                   <span
@@ -426,7 +426,7 @@ export default function AdminPage({ onBack }: { onBack?: () => void }) {
               <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
               <span>
                 هذه قائمة الأخطاء التي يسجّلها التطبيق تلقائيًا عند حدوث مشكلة فنية.
-                حاليًا تُعرض هنا كما هي ليطّلع عليها المالك؛ ربط "معالج ذكي" يحلل
+                حاليًا تُعرض هنا كما هي ليطّلع عليها الإدارة؛ ربط "معالج ذكي" يحلل
                 السبب تلقائيًا يحتاج خدمة ذكاء اصطناعي متصلة بالخادم (نفس فكرة
                 api/recognize-plate.ts) — أخبرني إن رغبت أفعّلها.
               </span>

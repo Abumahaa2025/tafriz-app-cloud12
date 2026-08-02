@@ -54,7 +54,7 @@ export default function AccountPage({
           </span>
           {user?.city && <span className="text-xs text-muted-foreground">{user.city}</span>}
           <Badge variant={user?.isOwner ? "default" : "secondary"}>
-            {user?.isOwner ? "مالك التطبيق" : user?.packageName ?? "بدون باقة"}
+            {user?.isOwner ? "إدارة التطبيق" : user?.packageName ?? "بدون باقة"}
           </Badge>
           {user?.packageExpiresAt && (
             <span className="text-xs text-muted-foreground">

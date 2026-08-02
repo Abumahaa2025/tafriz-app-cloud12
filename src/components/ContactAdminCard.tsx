@@ -96,7 +96,7 @@ export function ContactAdminCard() {
       <CardContent className="flex flex-col gap-3">
         <p className="text-xs text-muted-foreground">
           تواصل مع الإدارة عبر واتساب أو مباشرة من داخل التطبيق — أرسل طلب إذن أو رمز
-          تفعيل أو أي رسالة، وتصل للمالك في إدارة التحكم.
+          تفعيل أو أي رسالة، وتصل للإدارة في إدارة التحكم.
         </p>
 
         <div className="flex flex-col gap-2">

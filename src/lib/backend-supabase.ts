@@ -78,7 +78,7 @@ async function ensureProfile(
       is_owner: isDesignatedOwner,
       full_name: profile?.fullName || null,
       city: profile?.city || null,
-      package_name: isDesignatedOwner ? "مالك التطبيق" : null,
+      package_name: isDesignatedOwner ? "إدارة التطبيق" : null,
       last_seen_at: new Date().toISOString(),
     },
     { onConflict: "id" }
@@ -281,11 +281,8 @@ export const supabaseBackend: Backend = {
             throw new BackendError("bad_password", "البريد/الجوال أو كلمة المرور غير صحيحة");
           }
           if (existing.status === "revoked") {
-            await db.auth.signOut({ scope: "local" });
-            throw new BackendError(
-              "not_allowed",
-              "تم إيقاف حسابك من الإدارة. تواصل مع المالك عبر واتساب لإعادة التفعيل."
-            );
+            // السماح بالجلسة لشاشة طلب إعادة التفعيل / إدخال الرمز
+            return existing;
           }
           return existing;
         }

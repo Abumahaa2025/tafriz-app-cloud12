@@ -98,7 +98,7 @@ export const localBackend: Backend = {
       status: isDesignatedOwner ? "approved" : "pending",
       isOwner: isDesignatedOwner,
       createdAt: new Date().toISOString(),
-      packageName: isDesignatedOwner ? "مالك التطبيق" : null,
+      packageName: isDesignatedOwner ? "إدارة التطبيق" : null,
       packageExpiresAt: null,
       lastSeenAt: new Date().toISOString(),
       fullName: profile?.fullName?.trim() || null,
@@ -120,10 +120,10 @@ export const localBackend: Backend = {
     if (!user) throw new BackendError("not_found", "لا يوجد حساب بهذه البيانات");
     if (user.password !== pwd) throw new BackendError("bad_password", "كلمة المرور غير صحيحة");
     if (user.status === "revoked") {
-      throw new BackendError(
-        "not_allowed",
-        "تم إيقاف حسابك من الإدارة. تواصل مع المالك عبر واتساب لإعادة التفعيل."
-      );
+      // نسمح بالجلسة للوصول لشاشة طلب إعادة التفعيل / إدخال الرمز
+      saveLocal(SESSION_KEY, user.id);
+      writeUsers(users.map((u) => (u.id === user.id ? { ...u, lastSeenAt: new Date().toISOString() } : u)));
+      return strip({ ...user, lastSeenAt: new Date().toISOString() });
     }
     saveLocal(SESSION_KEY, user.id);
     writeUsers(users.map((u) => (u.id === user.id ? { ...u, lastSeenAt: new Date().toISOString() } : u)));
@@ -352,7 +352,7 @@ export const localBackend: Backend = {
       if (me.status === "revoked") {
         throw new BackendError(
           "not_allowed",
-          "الحساب موقوف. إعادة التفعيل فقط من المالك عبر إدارة التحكم أو برمز تفعيل يرسله المالك."
+          "الحساب موقوف. إعادة التفعيل فقط من الإدارة عبر إدارة التحكم أو برمز تفعيل ترسله الإدارة."
         );
       }
       const expires = new Date();

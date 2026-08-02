@@ -5,13 +5,14 @@ import {
   Lock,
   Eye,
   EyeOff,
-  Sparkles,
   ShieldCheck,
   LogIn,
   UserPlus,
   User,
   MapPin,
   MessageCircle,
+  KeyRound,
+  AppWindow,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,6 +20,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useAuth } from "@/context/AuthContext";
 import { IdentifierType, BackendError } from "@/lib/backend-types";
 import { getSupportPhones } from "@/lib/support-contact";
+import { backend } from "@/lib/backend";
 import {
   assessPasswordStrength,
   isPasswordAcceptable,
@@ -29,7 +31,7 @@ import {
 type Mode = "signin" | "signup";
 
 export default function LoginPage() {
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp, refresh } = useAuth();
   const [mode, setMode] = React.useState<Mode>("signin");
   const [idType, setIdType] = React.useState<IdentifierType>("email");
 
@@ -40,16 +42,31 @@ export default function LoginPage() {
   const [confirmPassword, setConfirmPassword] = React.useState("");
   const [showPassword, setShowPassword] = React.useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = React.useState(false);
+  const [activationCode, setActivationCode] = React.useState("");
+  const [showCodeBox, setShowCodeBox] = React.useState(false);
 
   const [error, setError] = React.useState("");
+  const [notice, setNotice] = React.useState("");
   const [busy, setBusy] = React.useState(false);
-  /** الدخول فقط بعد ضغط زر التسجيل صراحة — يمنع الإرسال التلقائي من المتصفح */
   const allowSubmitRef = React.useRef(false);
 
   const primaryPhone = getSupportPhones()[0]?.phone;
 
+  async function redeemIfNeeded() {
+    const code = activationCode.trim();
+    if (!code) return;
+    const ok = await backend.redeemActivationCode(code);
+    if (ok) {
+      setNotice("تم التفعيل بالرمز بنجاح");
+      await refresh();
+    } else {
+      throw new BackendError("unknown", "رمز التفعيل غير صحيح أو مستخدم من قبل");
+    }
+  }
+
   async function performAuth() {
     setError("");
+    setNotice("");
 
     const trimmedId = identifier.trim();
     const pwd = password;
@@ -83,6 +100,9 @@ export default function LoginPage() {
       } else {
         await signIn(idType, trimmedId, pwd);
       }
+      if (activationCode.trim()) {
+        await redeemIfNeeded();
+      }
     } catch (err) {
       setError(err instanceof BackendError ? err.message : err instanceof Error ? err.message : "حدث خطأ غير متوقع");
     } finally {
@@ -93,16 +113,35 @@ export default function LoginPage() {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    // رفض أي إرسال تلقائي (تعبئة متصفح/أندرويد) بدون ضغط زر الدخول
-    if (!allowSubmitRef.current) {
-      return;
-    }
+    if (!allowSubmitRef.current) return;
     void performAuth();
   }
 
   function handleLoginClick() {
     allowSubmitRef.current = true;
     void performAuth();
+  }
+
+  async function handleRedeemOnly() {
+    setError("");
+    setNotice("");
+    if (!activationCode.trim()) {
+      setError("أدخل رمز التفعيل أولًا");
+      return;
+    }
+    if (!identifier.trim() || !password.trim()) {
+      setError("أدخل الجوال/الإيميل وكلمة المرور ثم الرمز للتفعيل");
+      return;
+    }
+    setBusy(true);
+    try {
+      await signIn(idType, identifier.trim(), password);
+      await redeemIfNeeded();
+    } catch (err) {
+      setError(err instanceof BackendError ? err.message : err instanceof Error ? err.message : "تعذّر التفعيل");
+    } finally {
+      setBusy(false);
+    }
   }
 
   function handleForgotPassword() {
@@ -113,10 +152,18 @@ export default function LoginPage() {
     window.open(url, "_blank");
   }
 
+  function handleWhatsAppAdmin() {
+    const message =
+      "مرحباً، أحتاج التواصل مع إدارة تطبيق الفرز بخصوص الدخول أو رمز التفعيل أو طلب إذن.";
+    const url = primaryPhone
+      ? `https://wa.me/${primaryPhone}?text=${encodeURIComponent(message)}`
+      : `https://wa.me/?text=${encodeURIComponent(message)}`;
+    window.open(url, "_blank");
+  }
+
   return (
     <div className="flex min-h-screen flex-col justify-center bg-gradient-to-b from-secondary/50 via-background to-background px-6 py-10">
       <div className="mx-auto flex w-full max-w-md flex-col gap-5">
-        {/* شارة الأمان */}
         <div className="flex justify-center">
           <div className="flex items-center gap-1.5 rounded-full bg-secondary px-3 py-1.5 text-primary">
             <ShieldCheck className="h-3.5 w-3.5" />
@@ -125,9 +172,13 @@ export default function LoginPage() {
         </div>
 
         <div className="flex flex-col items-center gap-3 text-center">
-          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-emerald-800 text-primary-foreground shadow-lg shadow-primary/20">
-            <Sparkles className="h-8 w-8" />
-          </div>
+          <img
+            src="/tafriz-car.png"
+            alt="Tafriz Car"
+            className="h-16 w-16 rounded-2xl object-cover shadow-lg shadow-primary/20"
+            width={64}
+            height={64}
+          />
           <div>
             <h1 className="text-xl font-black text-primary">تطبيق الفرز والربط الذكي</h1>
             <p className="mt-1 text-sm text-muted-foreground">
@@ -138,7 +189,6 @@ export default function LoginPage() {
 
         <Card className="shadow-lg">
           <CardContent className="flex flex-col gap-4 pt-6">
-            {/* تبويب دخول / حساب جديد */}
             <div className="flex overflow-hidden rounded-2xl bg-muted p-1">
               <button
                 type="button"
@@ -168,7 +218,6 @@ export default function LoginPage() {
               </button>
             </div>
 
-            {/* طريقة الدخول: إيميل / جوال */}
             <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
               <span>طريقة الدخول:</span>
               <button
@@ -202,12 +251,13 @@ export default function LoginPage() {
                 {error}
               </p>
             )}
+            {notice && (
+              <p className="rounded-lg bg-primary/10 px-3 py-2 text-center text-xs font-bold text-primary">
+                {notice}
+              </p>
+            )}
 
-            <form
-              onSubmit={handleSubmit}
-              className="flex flex-col gap-3"
-              autoComplete="off"
-            >
+            <form onSubmit={handleSubmit} className="flex flex-col gap-3" autoComplete="off">
               {mode === "signup" && (
                 <div className="relative">
                   <User className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -328,47 +378,78 @@ export default function LoginPage() {
                 </button>
               )}
 
-              <Button
-                type="button"
-                size="lg"
-                disabled={busy}
-                className="mt-1"
-                onClick={handleLoginClick}
-              >
+              <Button type="button" size="lg" disabled={busy} className="mt-1" onClick={handleLoginClick}>
                 {mode === "signin" ? <LogIn className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
                 {busy ? "جاري التحقق..." : mode === "signin" ? "تسجيل الدخول الآن" : "إنشاء الحساب ومتابعة"}
               </Button>
             </form>
+
+            <button
+              type="button"
+              onClick={() => setShowCodeBox((v) => !v)}
+              className="flex items-center justify-center gap-1.5 text-xs font-bold text-muted-foreground"
+            >
+              <KeyRound className="h-3.5 w-3.5" />
+              {showCodeBox ? "إخفاء رمز التفعيل" : "لدي رمز تفعيل من الإدارة"}
+            </button>
+
+            {showCodeBox && (
+              <div className="flex flex-col gap-2 rounded-xl border border-border bg-muted/40 p-3">
+                <Input
+                  placeholder="الصق رمز التفعيل هنا"
+                  value={activationCode}
+                  onChange={(e) => setActivationCode(e.target.value)}
+                  className="text-center"
+                  dir="ltr"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  أدخل بيانات حسابك أعلاه ثم الرمز، واضغط تفعيل بالرمز.
+                </p>
+                <Button type="button" variant="outline" disabled={busy} onClick={() => void handleRedeemOnly()}>
+                  <KeyRound className="h-4 w-4" />
+                  تفعيل بالرمز
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
 
-        {/* تواصل مع المالك مباشرة */}
         <Card className="border-emerald-500/20 bg-secondary/30">
           <CardContent className="flex flex-col items-center gap-2 pt-4 text-center">
-            <p className="text-xs font-bold">💡 هل تواجه مشكلة في الدخول أو تحتاج حساب خاص؟</p>
+            <p className="text-xs font-bold">التواصل مع الإدارة</p>
             <p className="text-[11px] text-muted-foreground">
-              تواصل مباشرة مع مالك التطبيق على الواتساب للتفعيل المباشر
+              خياران: واتساب مباشرة، أو بعد الدخول عبر التطبيق (طلب إذن / رمز / أي رسالة).
             </p>
-            <Button
-              size="sm"
-              className="mt-1 bg-[#25D366] text-white hover:bg-[#25D366]/90"
-              onClick={() => {
-                const message = "مرحباً، أواجه مشكلة في تسجيل الدخول أو إنشاء حساب في تطبيق الفرز.";
-                const url = primaryPhone
-                  ? `https://wa.me/${primaryPhone}?text=${encodeURIComponent(message)}`
-                  : `https://wa.me/?text=${encodeURIComponent(message)}`;
-                window.open(url, "_blank");
-              }}
-            >
-              <MessageCircle className="h-4 w-4" />
-              تواصل مع المالك عبر الواتساب
-            </Button>
+            <div className="mt-1 flex w-full flex-col gap-2">
+              <Button
+                size="sm"
+                className="w-full bg-[#25D366] text-white hover:bg-[#25D366]/90"
+                onClick={handleWhatsAppAdmin}
+              >
+                <MessageCircle className="h-4 w-4" />
+                التواصل عبر الواتساب
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full"
+                onClick={() => {
+                  setNotice(
+                    "سجّل الدخول أو أنشئ حسابًا ثم استخدم «التواصل عبر التطبيق» من شاشة طلب الإذن."
+                  );
+                  setMode("signup");
+                }}
+              >
+                <AppWindow className="h-4 w-4" />
+                التواصل مع الإدارة عبر التطبيق
+              </Button>
+            </div>
           </CardContent>
         </Card>
 
         <p className="text-center text-xs leading-6 text-muted-foreground">
-          إنشاء الحساب لا يمنحك دخولًا فوريًا — يحتاج موافقة مالك التطبيق أولًا،
-          وستظهر لك شاشة متابعة الطلب بعد إنشاء الحساب مباشرة.
+          إنشاء الحساب لا يمنحك دخولًا فوريًا — يحتاج موافقة الإدارة أولًا، وستظهر لك شاشة متابعة
+          الطلب بعد إنشاء الحساب مباشرة.
         </p>
       </div>
     </div>

@@ -100,7 +100,7 @@ export default function RecordPage({
 
   function openOverlay(target: AppVoiceOverlay) {
     if (target === "admin" && !isOwner) {
-      showNotice("إدارة التحكم متاحة لمالك التطبيق فقط");
+      showNotice("إدارة التحكم متاحة لإدارة التطبيق فقط");
       return false;
     }
     if (target === "home") {

@@ -46,7 +46,7 @@ async function resolveRequester(
   if (profile.identifier === ownerIdent && (!profile.is_owner || profile.status !== "approved")) {
     await admin
       .from("profiles")
-      .update({ is_owner: true, status: "approved", package_name: "مالك التطبيق" })
+      .update({ is_owner: true, status: "approved", package_name: "إدارة التطبيق" })
       .eq("id", profile.id);
     profile.is_owner = true;
     profile.status = "approved";
@@ -218,7 +218,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           return res.status(403).json({
             error: "personal_code_blocked_after_revoke",
             message:
-              "الحساب موقوف. إعادة التفعيل فقط من المالك عبر إدارة التحكم أو برمز تفعيل يرسله المالك.",
+              "الحساب موقوف. إعادة التفعيل فقط من الإدارة عبر إدارة التحكم أو برمز تفعيل ترسله الإدارة.",
           });
         }
         let h = 2166136261;
@@ -248,7 +248,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           return res.status(400).json({
             error: upErr?.message || "profile_update_failed",
             message:
-              "تعذّر التفعيل بالرمز الشخصي. إن كان الحساب موقوفًا فالتفعيل من المالك فقط.",
+              "تعذّر التفعيل بالرمز الشخصي. إن كان الحساب موقوفًا فالتفعيل من الإدارة فقط.",
           });
         }
         if (updated.status !== "approved") {

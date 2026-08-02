@@ -97,7 +97,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
         <div className="flex min-h-screen flex-col items-center justify-center gap-3 px-6 text-center">
           <h2 className="text-lg font-bold">حدث خطأ غير متوقع</h2>
           <p className="text-sm text-muted-foreground">
-            تم تسجيل المشكلة تلقائيًا وسيطّلع عليها مالك التطبيق. جرّب تحديث الصفحة.
+            تم تسجيل المشكلة تلقائيًا وسيطّلع عليها إدارة التطبيق. جرّب تحديث الصفحة.
           </p>
         </div>
       );

@@ -27,7 +27,7 @@ async function notifyAccountRevoked(user: AppUser) {
   const body =
     `تم إيقاف حسابك من الإدارة. تواصل عبر واتساب لإعادة التفعيل.` +
     (phone ? ` الرقم: +${phone}.` : "") +
-    ` التفعيل يتم فقط بعد موافقة المالك أو إرسال رمز تفعيل منه.`;
+    ` التفعيل يتم فقط بعد موافقة الإدارة أو إرسال رمز تفعيل منها.`;
 
   try {
     localStorage.setItem(
@@ -190,15 +190,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new BackendError("bad_password", "يرجى إدخال كلمة المرور");
     }
     const u = await backend.signIn(type, identifier, pwd);
-    if (u.status === "revoked") {
-      await backend.signOut();
-      statusRef.current = null;
-      setUser(null);
-      throw new BackendError(
-        "not_allowed",
-        "تم إيقاف حسابك من الإدارة. تواصل عبر واتساب — إعادة التفعيل فقط بموافقة المالك أو برمز يرسله هو."
-      );
-    }
+    // pending / revoked يدخلان شاشة المتابعة (طلب إذن / رمز تفعيل)
     statusRef.current = u.status;
     setUser(u);
     return u;
