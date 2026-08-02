@@ -181,7 +181,11 @@ export const localBackend: Backend = {
 
   async revokeUser(id) {
     const users = readUsers();
-    writeUsers(users.map((u) => (u.id === id ? { ...u, status: "revoked" } : u)));
+    writeUsers(
+      users.map((u) =>
+        u.id === id ? { ...u, status: "revoked", packageName: "موقوف", packageExpiresAt: null } : u
+      )
+    );
   },
 
   async submitFeedback(identifier, message, threadId) {
@@ -325,15 +329,36 @@ export const localBackend: Backend = {
   },
 
   async redeemActivationCode(code) {
-    const cleanCode = normalizeActivationCodeInput(code);
     const sessionId = loadLocal<string | null>(SESSION_KEY, null);
     if (!sessionId) return false;
 
+    const { personalActivationCode, normalizePersonalCodeInput, isPersonalCodeFormat } =
+      await import("./personal-code");
+    const personal = normalizePersonalCodeInput(code);
+    if (isPersonalCodeFormat(personal)) {
+      if (personal !== personalActivationCode(sessionId)) return false;
+      const users = readUsers();
+      const expires = new Date();
+      expires.setDate(expires.getDate() + 30);
+      writeUsers(
+        users.map((u) =>
+          u.id === sessionId
+            ? {
+                ...u,
+                status: "approved",
+                packageName: "مفعّل برمز شخصي",
+                packageExpiresAt: expires.toISOString(),
+              }
+            : u
+        )
+      );
+      return true;
+    }
+
+    const cleanCode = normalizeActivationCodeInput(code);
     const redeemed = loadLocal<string[]>(REDEEMED_CODES_KEY, []);
     if (redeemed.includes(cleanCode)) return false;
 
-    // 1) الرموز الموقّعة الجديدة تعمل عبر الأجهزة
-    // 2) الرموز القديمة المخزّنة على نفس الجهاز تبقى مدعومة للتوافق
     const localCodes = loadLocal<ActivationCode[]>(ACTIVATION_CODES_KEY, []);
     const localMatch = localCodes.find((c) => c.code === cleanCode && !c.usedBy);
     const signedOk = verifySignedActivationCode(cleanCode);

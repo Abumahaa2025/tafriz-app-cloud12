@@ -6,37 +6,51 @@ import { Input } from "@/components/ui/input";
 import { useAuth } from "@/context/AuthContext";
 import { getSupportPhones } from "@/lib/support-contact";
 import { backend } from "@/lib/backend";
+import { personalActivationCode } from "@/lib/personal-code";
 
 export default function PendingApprovalPage() {
   const { user, signOut, refresh } = useAuth();
   const revoked = user?.status === "revoked";
   const primaryPhone = getSupportPhones()[0]?.phone;
+  const personalCode = user ? personalActivationCode(user.id) : "";
 
   const [copied, setCopied] = React.useState(false);
+  const [copiedCode, setCopiedCode] = React.useState(false);
   const [code, setCode] = React.useState("");
   const [codeError, setCodeError] = React.useState<string | null>(null);
-  const [showCodeBox, setShowCodeBox] = React.useState(false);
+  const [showCodeBox, setShowCodeBox] = React.useState(revoked);
   const [redeemBusy, setRedeemBusy] = React.useState(false);
 
-  // بعد موافقة/إيقاف المالك يتحدّث الوضع تلقائيًا
   React.useEffect(() => {
     const tick = () => {
       refresh().catch(() => {});
     };
     tick();
-    const interval = setInterval(tick, 4000);
+    const interval = setInterval(tick, 3000);
     return () => clearInterval(interval);
   }, [refresh]);
 
   function requestMessage() {
     if (!user) return "";
     const typeLabel = user.identifierType === "email" ? "بريد إلكتروني" : "رقم جوال";
+    if (revoked) {
+      return [
+        "طلب إعادة تفعيل حساب موقوف - تطبيق الفرز",
+        user.fullName ? `الاسم: ${user.fullName}` : null,
+        `الحساب: ${user.identifier}`,
+        `الرمز الشخصي: ${personalCode}`,
+        "الرجاء إعادة تفعيل حسابي بعد الإيقاف.",
+      ]
+        .filter(Boolean)
+        .join("\n");
+    }
     return [
       "طلب تفعيل حساب - تطبيق الفرز",
       user.fullName ? `الاسم: ${user.fullName}` : null,
       `الحساب: ${user.identifier}`,
       `نوع الحساب: ${typeLabel}`,
       user.city ? `المدينة: ${user.city}` : null,
+      `الرمز الشخصي: ${personalCode}`,
       `تاريخ الطلب: ${new Date(user.createdAt).toLocaleString("ar-SA")}`,
       "الرجاء الموافقة على الطلب ومنحي صلاحية استخدام التطبيق.",
     ]
@@ -58,6 +72,13 @@ export default function PendingApprovalPage() {
     setTimeout(() => setCopied(false), 1500);
   }
 
+  function handleCopyCode() {
+    if (!personalCode) return;
+    navigator.clipboard?.writeText(personalCode).catch(() => {});
+    setCopiedCode(true);
+    setTimeout(() => setCopiedCode(false), 1500);
+  }
+
   async function handleRedeemCode() {
     setCodeError(null);
     if (!code.trim()) {
@@ -72,6 +93,8 @@ export default function PendingApprovalPage() {
       } else {
         setCodeError("رمز التفعيل غير صحيح أو مستخدم من قبل");
       }
+    } catch (err) {
+      setCodeError(err instanceof Error ? err.message : "تعذّر التفعيل");
     } finally {
       setRedeemBusy(false);
     }
@@ -79,7 +102,12 @@ export default function PendingApprovalPage() {
 
   return (
     <div className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-4 px-6 text-center">
-      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-secondary">
+      <div
+        className={
+          "flex h-16 w-16 items-center justify-center rounded-full " +
+          (revoked ? "bg-destructive/15 ring-2 ring-destructive/40" : "bg-secondary")
+        }
+      >
         {revoked ? (
           <Ban className="h-8 w-8 text-destructive" />
         ) : (
@@ -87,17 +115,38 @@ export default function PendingApprovalPage() {
         )}
       </div>
 
-      <h1 className="text-lg font-bold">
+      <h1 className={"text-lg font-bold " + (revoked ? "text-destructive" : "")}>
         {revoked ? "تم إيقاف صلاحية الدخول" : "التواصل مع الإدارة لطلب الإذن للاستخدام"}
       </h1>
       <p className="text-sm leading-6 text-muted-foreground">
         {revoked
-          ? "أوقف مالك التطبيق صلاحيتك. تواصل معه عبر واتساب أدناه لإعادة تفعيل حسابك."
+          ? "أوقف مالك التطبيق صلاحيتك. تواصل عبر واتساب لإعادة التفعيل، أو أدخل رمزك الشخصي أدناه بعد موافقة المالك."
           : "مرحبًا بك! يتطلب استخدام التطبيق الحصول على إذن مصرَّح من الإدارة. تواصل عبر واتساب أو الاتصال، وستدخل تلقائيًا فور الموافقة."}
       </p>
       <p className="text-xs text-muted-foreground" dir="ltr">
         {user?.identifier}
       </p>
+
+      {personalCode && (
+        <Card className="w-full border-primary/25 bg-primary/5">
+          <CardContent className="flex items-center justify-between gap-2 pt-4">
+            <button
+              type="button"
+              onClick={handleCopyCode}
+              className="text-muted-foreground hover:text-primary"
+              aria-label="نسخ الرمز"
+            >
+              {copiedCode ? <Check className="h-4 w-4 text-primary" /> : <Copy className="h-4 w-4" />}
+            </button>
+            <div className="text-right">
+              <p className="text-[11px] text-muted-foreground">رمزك الشخصي للتفعيل</p>
+              <p className="text-base font-black text-primary" dir="ltr">
+                {personalCode}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {primaryPhone && (
         <Card className="w-full border-emerald-500/30 bg-secondary/40">
@@ -118,7 +167,7 @@ export default function PendingApprovalPage() {
       <div className="flex w-full flex-col gap-2">
         <Button className="w-full bg-[#25D366] text-white hover:bg-[#25D366]/90" size="lg" onClick={handleWhatsApp}>
           <MessageCircle className="h-5 w-5" />
-          التواصل عبر الواتساب (طلب الإذن)
+          {revoked ? "واتساب لإعادة التفعيل" : "التواصل عبر الواتساب (طلب الإذن)"}
         </Button>
         {primaryPhone && (
           <Button
@@ -132,19 +181,18 @@ export default function PendingApprovalPage() {
         )}
       </div>
 
-      {/* رمز تفعيل مباشر من المالك — بديل فوري بدل انتظار الرد على واتساب */}
       <button
         onClick={() => setShowCodeBox((v) => !v)}
         className="flex items-center gap-1.5 text-xs font-bold text-muted-foreground"
       >
         <KeyRound className="h-3.5 w-3.5" />
-        {showCodeBox ? "إخفاء إدخال الرمز" : "هل لديك رمز تفعيل من المالك؟"}
+        {showCodeBox ? "إخفاء إدخال الرمز" : "إدخال رمز التفعيل / الرمز الشخصي"}
       </button>
 
       {showCodeBox && (
         <div className="flex w-full flex-col gap-2">
           <Input
-            placeholder="أدخل رمز التفعيل"
+            placeholder="TFZ-U-...... أو رمز المالك"
             value={code}
             onChange={(e) => setCode(e.target.value)}
             className="text-center"
@@ -157,11 +205,9 @@ export default function PendingApprovalPage() {
         </div>
       )}
 
-      {!revoked && (
-        <Button variant="outline" onClick={() => refresh()} className="w-full">
-          تحديث حالة الطلب
-        </Button>
-      )}
+      <Button variant="outline" onClick={() => refresh()} className="w-full">
+        تحديث حالة الطلب
+      </Button>
 
       <Button variant="ghost" onClick={signOut} className="text-muted-foreground">
         تسجيل خروج

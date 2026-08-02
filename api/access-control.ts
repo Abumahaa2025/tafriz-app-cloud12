@@ -98,17 +98,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (error || !data) {
           return res.status(400).json({ error: error?.message || "approve_failed" });
         }
+        if (data.status !== "approved") {
+          return res.status(400).json({
+            error:
+              "approve_blocked_by_trigger — نفّذ supabase/migrate-fix-revoke-trigger.sql في Supabase",
+          });
+        }
         return res.status(200).json({ ok: true, profile: data });
       }
 
       const { data, error } = await admin
         .from("profiles")
-        .update({ status: "revoked" })
+        .update({
+          status: "revoked",
+          package_name: "موقوف",
+          package_expires_at: null,
+        })
         .eq("id", userId)
-        .select("id,status")
+        .select("id,status,package_name")
         .maybeSingle();
       if (error || !data) {
         return res.status(400).json({ error: error?.message || "revoke_failed" });
+      }
+      if (data.status !== "revoked") {
+        return res.status(400).json({
+          error:
+            "revoke_blocked_by_trigger — نفّذ supabase/migrate-fix-revoke-trigger.sql في Supabase",
+        });
       }
       return res.status(200).json({ ok: true, profile: data });
     }
@@ -135,6 +151,43 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .toUpperCase()
         .replace(/\s+/g, "");
       if (!raw) return res.status(400).json({ error: "missing_code" });
+
+      // رمز شخصي ثابت للمستخدم: TFZ-U-XXXXXX
+      const normalizedPersonal = raw.replace(/[\s_]+/g, "-");
+      if (/^TFZ-U-\d{6}$/.test(normalizedPersonal)) {
+        let h = 2166136261;
+        const id = user.id;
+        for (let i = 0; i < id.length; i++) {
+          h ^= id.charCodeAt(i);
+          h = Math.imul(h, 16777619);
+        }
+        const expected = `TFZ-U-${String(Math.abs(h) % 1_000_000).padStart(6, "0")}`;
+        if (normalizedPersonal !== expected) {
+          return res.status(400).json({ error: "invalid_personal_code" });
+        }
+        const expires = new Date();
+        expires.setDate(expires.getDate() + 30);
+        const { data: updated, error: upErr } = await admin
+          .from("profiles")
+          .update({
+            status: "approved",
+            package_name: "مفعّل برمز شخصي",
+            package_expires_at: expires.toISOString(),
+          })
+          .eq("id", user.id)
+          .select("id,status")
+          .maybeSingle();
+        if (upErr || !updated) {
+          return res.status(400).json({ error: upErr?.message || "profile_update_failed" });
+        }
+        if (updated.status !== "approved") {
+          return res.status(400).json({
+            error:
+              "approve_blocked_by_trigger — نفّذ supabase/migrate-fix-revoke-trigger.sql في Supabase",
+          });
+        }
+        return res.status(200).json({ ok: true, profile: updated });
+      }
 
       const { data: codeRow, error: findErr } = await admin
         .from("activation_codes")

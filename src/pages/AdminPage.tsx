@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { backend } from "@/lib/backend";
 import { AppUser, FeedbackItem, ErrorReportItem, ActivationCode } from "@/lib/backend-types";
 import { getSupportPhones, setSupportPhones, SupportPhone } from "@/lib/support-contact";
+import { personalActivationCode } from "@/lib/personal-code";
 
 const STATUS_LABEL: Record<AppUser["status"], string> = {
   pending: "قيد المراجعة",
@@ -171,46 +172,84 @@ export default function AdminPage({ onBack }: { onBack?: () => void }) {
                 </p>
                 <p className="flex items-center gap-1 text-xs text-muted-foreground">
                   <span
-                    className={`h-1.5 w-1.5 rounded-full ${
-                      isOnline(u.lastSeenAt) ? "bg-emerald-500" : "bg-muted-foreground/40"
-                    }`}
+                    className={
+                      "h-2 w-2 rounded-full " +
+                      (u.status === "revoked"
+                        ? "bg-destructive shadow-[0_0_0_3px_rgba(220,38,38,0.25)]"
+                        : isOnline(u.lastSeenAt)
+                          ? "bg-emerald-500"
+                          : "bg-muted-foreground/40")
+                    }
                   />
-                  {isOnline(u.lastSeenAt)
-                    ? "نشِط الآن"
-                    : u.lastSeenAt
-                    ? `آخر نشاط: ${new Date(u.lastSeenAt).toLocaleString("ar-SA")}`
-                    : "لم يدخل بعد"}
+                  {u.status === "revoked"
+                    ? "موقوف (أحمر)"
+                    : isOnline(u.lastSeenAt)
+                      ? "نشِط الآن"
+                      : u.lastSeenAt
+                        ? `آخر نشاط: ${new Date(u.lastSeenAt).toLocaleString("ar-SA")}`
+                        : "لم يدخل بعد"}
+                </p>
+                <p className="rounded-lg bg-muted/60 px-2 py-1 text-[11px] font-bold" dir="ltr">
+                  رمز شخصي: {personalActivationCode(u.id)}
                 </p>
                 {!u.isOwner && (
                   <div className="flex gap-2">
                     <Button
                       size="sm"
                       className="flex-1"
+                      disabled={u.status === "approved"}
                       onClick={async () => {
-                        await backend.approveUser(u.id, "الباقة الشهرية", 30);
-                        flashAction(`تمت الموافقة على ${u.identifier}`);
-                        await refresh();
+                        try {
+                          await backend.approveUser(u.id, "الباقة الشهرية", 30);
+                          setUsers((prev) =>
+                            prev.map((x) =>
+                              x.id === u.id
+                                ? { ...x, status: "approved", packageName: "الباقة الشهرية" }
+                                : x
+                            )
+                          );
+                          flashAction(`تمت الموافقة على ${u.identifier}`);
+                          await refresh();
+                        } catch (err) {
+                          flashAction(
+                            err instanceof Error ? err.message : "تعذّرت الموافقة — راجع إعدادات Supabase"
+                          );
+                        }
                       }}
                     >
                       <Check className="h-4 w-4" />
-                      موافقة (30 يوم)
+                      {u.status === "approved" ? "مفعّل" : "تفعيل (30 يوم)"}
                     </Button>
                     <Button
                       size="sm"
                       variant="destructive"
                       className="flex-1"
+                      disabled={u.status === "revoked"}
                       onClick={async () => {
-                        await backend.revokeUser(u.id);
-                        // تحديث فوري في قائمة المالك
-                        setUsers((prev) =>
-                          prev.map((x) => (x.id === u.id ? { ...x, status: "revoked" } : x))
-                        );
-                        flashAction(`تم إيقاف ${u.identifier} — سيُمنع فورًا ويصله إشعار`);
-                        await refresh();
+                        try {
+                          await backend.revokeUser(u.id);
+                          setUsers((prev) =>
+                            prev.map((x) =>
+                              x.id === u.id
+                                ? { ...x, status: "revoked", packageName: "موقوف" }
+                                : x
+                            )
+                          );
+                          flashAction(
+                            `تم إيقاف ${u.identifier} — الإشارة حمراء ورمزه ${personalActivationCode(u.id)}`
+                          );
+                          await refresh();
+                        } catch (err) {
+                          flashAction(
+                            err instanceof Error
+                              ? err.message
+                              : "تعذّر الإيقاف — نفّذ migrate-fix-revoke-trigger.sql"
+                          );
+                        }
                       }}
                     >
                       <Ban className="h-4 w-4" />
-                      إيقاف
+                      {u.status === "revoked" ? "موقوف" : "إيقاف"}
                     </Button>
                   </div>
                 )}

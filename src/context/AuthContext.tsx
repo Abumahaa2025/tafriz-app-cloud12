@@ -2,6 +2,8 @@ import * as React from "react";
 import { backend } from "@/lib/backend";
 import { AppUser, BackendError, IdentifierType } from "@/lib/backend-types";
 import { ensureNotificationPermission } from "@/lib/feedback-notify";
+import { getSupportPhones } from "@/lib/support-contact";
+import { personalActivationCode } from "@/lib/personal-code";
 
 interface AuthContextValue {
   user: AppUser | null;
@@ -18,17 +20,34 @@ interface AuthContextValue {
 }
 
 const AuthContext = React.createContext<AuthContextValue | null>(null);
+const REVOKED_NOTIFIED_KEY = "tafriz_revoked_notified_v1";
 
-async function notifyAccountRevoked() {
+async function notifyAccountRevoked(user: AppUser) {
+  const phones = getSupportPhones();
+  const phone = phones[0]?.phone;
+  const code = personalActivationCode(user.id);
+  const body =
+    `تم إيقاف حسابك من الإدارة. تواصل عبر واتساب لإعادة التفعيل.` +
+    (phone ? ` الرقم: +${phone}.` : "") +
+    ` رمزك الشخصي: ${code}`;
+
+  try {
+    localStorage.setItem(
+      REVOKED_NOTIFIED_KEY,
+      JSON.stringify({ at: Date.now(), userId: user.id, code })
+    );
+  } catch {
+    // ignore
+  }
+
   try {
     if (!(await ensureNotificationPermission())) return;
-    const body = "أوقف المالك صلاحية استخدامك للتطبيق. تواصل معه لإعادة التفعيل.";
     try {
       if ("serviceWorker" in navigator) {
         const reg = await navigator.serviceWorker.ready;
-        await reg.showNotification("تم إيقاف حسابك", {
+        await reg.showNotification("تم إيقاف حسابك — تواصل مع الإدارة", {
           body,
-          tag: "account-revoked",
+          tag: `account-revoked-${user.id}`,
           dir: "rtl",
           lang: "ar",
           requireInteraction: true,
@@ -38,11 +57,17 @@ async function notifyAccountRevoked() {
       // ignore
     }
     try {
-      new Notification("تم إيقاف حسابك", { body, tag: "account-revoked", dir: "rtl", lang: "ar" });
+      new Notification("تم إيقاف حسابك — تواصل مع الإدارة", {
+        body,
+        tag: `account-revoked-${user.id}`,
+        dir: "rtl",
+        lang: "ar",
+        requireInteraction: true,
+      });
     } catch {
       // ignore
     }
-    if (navigator.vibrate) navigator.vibrate([180, 80, 180]);
+    if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
   } catch {
     // ignore
   }
@@ -69,22 +94,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refresh = React.useCallback(async () => {
     const u = await backend.getCurrentUser();
     if (u) statusRef.current = u.status;
+    else statusRef.current = null;
     setUser(u);
   }, []);
 
-  // لا نستعيد الجلسة القديمة تلقائيًا — الدخول فقط بعد إدخال كلمة المرور
+  // استعادة الجلسة عند السحب/التحديث — بدون إجبار تسجيل خروج
   React.useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        await backend.signOut();
+        const u = await backend.getCurrentUser();
+        if (cancelled) return;
+        if (u) {
+          // الموقوف لا يدخل للتطبيق الرئيسي
+          statusRef.current = u.status;
+          setUser(u);
+        } else {
+          statusRef.current = null;
+          setUser(null);
+        }
       } catch {
-        // ignore
-      }
-      if (!cancelled) {
-        setUser(null);
-        statusRef.current = null;
-        setLoading(false);
+        if (!cancelled) {
+          statusRef.current = null;
+          setUser(null);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     })();
     return () => {
@@ -108,7 +143,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
         const prev = statusRef.current;
         if (prev === "approved" && u.status === "revoked") {
-          await notifyAccountRevoked();
+          await notifyAccountRevoked(u);
         }
         statusRef.current = u.status;
         setUser((cur) => (cur && sameUser(cur, u) ? cur : u));
@@ -118,7 +153,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
 
     tick();
-    const interval = setInterval(tick, 4_000);
+    const interval = setInterval(tick, 3_000);
     const onVis = () => {
       if (document.visibilityState === "visible") tick();
     };
@@ -130,15 +165,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [user?.id]);
 
-  // نبضة آخر نشاط للمالك
   React.useEffect(() => {
-    if (!user) return;
+    if (!user || user.status === "revoked") return;
     backend.touchLastSeen().catch(() => {});
     const interval = setInterval(() => {
       backend.touchLastSeen().catch(() => {});
     }, 60_000);
     return () => clearInterval(interval);
-  }, [user?.id]);
+  }, [user?.id, user?.status]);
 
   async function signUp(
     type: IdentifierType,
@@ -158,6 +192,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new BackendError("bad_password", "يرجى إدخال كلمة المرور");
     }
     const u = await backend.signIn(type, identifier, pwd);
+    if (u.status === "revoked") {
+      await backend.signOut();
+      statusRef.current = null;
+      setUser(null);
+      throw new BackendError(
+        "not_allowed",
+        "تم إيقاف حسابك من الإدارة. تواصل عبر واتساب لإعادة التفعيل برمزك الشخصي."
+      );
+    }
     statusRef.current = u.status;
     setUser(u);
     return u;

@@ -234,6 +234,11 @@ security definer
 set search_path = public
 as $$
 begin
+  -- السماح لتحديثات لوحة الإدارة (service role عبر access-control API)
+  if coalesce(auth.jwt() ->> 'role', '') = 'service_role' then
+    return new;
+  end if;
+
   if not public.is_owner() then
     new.status := old.status;
     new.is_owner := old.is_owner;
