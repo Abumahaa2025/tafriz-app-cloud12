@@ -653,7 +653,7 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
           <input
             ref={appendInputRef}
             type="file"
-            accept=".xlsx,.xls,.csv"
+            accept="*/*"
             className="hidden"
             onChange={(e) => {
               const f = e.target.files?.[0];

@@ -2,6 +2,7 @@ import * as React from "react";
 import { Download, Upload, MessageCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { nativeShareText } from "@/lib/native-share";
+import { pickSpreadsheetFile } from "@/lib/pick-spreadsheet";
 
 interface ImportExportBarProps {
   /** Called with the picked file so the parent can route it into its own upload logic. */
@@ -16,12 +17,6 @@ type NavShare = Navigator & {
   share?: (data: ShareData) => Promise<void>;
 };
 
-type FilePickerWindow = Window & {
-  showOpenFilePicker?: (options?: {
-    multiple?: boolean;
-    types?: { description: string; accept: Record<string, string[]> }[];
-  }) => Promise<{ getFile: () => Promise<File> }[]>;
-};
 
 export function ImportExportBar({
   onImport,
@@ -86,34 +81,12 @@ export function ImportExportBar({
   }
 
   async function handleImport() {
-    const win = window as FilePickerWindow;
-
-    // المحاولة الأولى: منتقي الملفات الحديث (File System Access API) — يعطي
-    // واجهة أوسع من مربع الرفع القديم على المتصفحات التي تدعمه (Chrome/Edge).
-    if (win.showOpenFilePicker) {
-      try {
-        const [handle] = await win.showOpenFilePicker({
-          types: [
-            {
-              description: "ملفات إكسل",
-              accept: {
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
-                "application/vnd.ms-excel": [".xls"],
-                "text/csv": [".csv"],
-              },
-            },
-          ],
-        });
-        const file = await handle.getFile();
-        onImport(file);
-        return;
-      } catch (err) {
-        if (err instanceof Error && err.name === "AbortError") return; // المستخدم ألغى بنفسه
-        // غير مدعوم أو فشل — نكمل على منتقي الملفات العادي بالأسفل
-      }
+    const file = await pickSpreadsheetFile();
+    if (!file) {
+      flashStatus("اختر ملف Excel/CSV من الملفات أو التطبيقات");
+      return;
     }
-
-    inputRef.current?.click();
+    onImport(file);
   }
 
   return (
