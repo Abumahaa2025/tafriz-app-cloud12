@@ -19,7 +19,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useAuth } from "@/context/AuthContext";
 import { IdentifierType, BackendError } from "@/lib/backend-types";
 import { getSupportPhones } from "@/lib/support-contact";
-import { backend } from "@/lib/backend";
 import {
   assessPasswordStrength,
   isPasswordAcceptable,
@@ -44,16 +43,12 @@ export default function LoginPage() {
 
   const [error, setError] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+  /** الدخول فقط بعد ضغط زر التسجيل صراحة — يمنع الإرسال التلقائي من المتصفح */
+  const allowSubmitRef = React.useRef(false);
 
   const primaryPhone = getSupportPhones()[0]?.phone;
 
-  // عند ظهور شاشة الدخول: امسح أي جلسة شبح حتى لا يُفتح الحساب بالبريد فقط
-  React.useEffect(() => {
-    backend.signOut().catch(() => {});
-  }, []);
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function performAuth() {
     setError("");
 
     const trimmedId = identifier.trim();
@@ -89,10 +84,25 @@ export default function LoginPage() {
         await signIn(idType, trimmedId, pwd);
       }
     } catch (err) {
-      setError(err instanceof BackendError ? err.message : "حدث خطأ غير متوقع");
+      setError(err instanceof BackendError ? err.message : err instanceof Error ? err.message : "حدث خطأ غير متوقع");
     } finally {
       setBusy(false);
+      allowSubmitRef.current = false;
     }
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    // رفض أي إرسال تلقائي (تعبئة متصفح/أندرويد) بدون ضغط زر الدخول
+    if (!allowSubmitRef.current) {
+      return;
+    }
+    void performAuth();
+  }
+
+  function handleLoginClick() {
+    allowSubmitRef.current = true;
+    void performAuth();
   }
 
   function handleForgotPassword() {
@@ -193,7 +203,11 @@ export default function LoginPage() {
               </p>
             )}
 
-            <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+            <form
+              onSubmit={handleSubmit}
+              className="flex flex-col gap-3"
+              autoComplete="off"
+            >
               {mode === "signup" && (
                 <div className="relative">
                   <User className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -202,6 +216,7 @@ export default function LoginPage() {
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
                     className="pr-10 text-right"
+                    autoComplete="off"
                   />
                 </div>
               )}
@@ -219,6 +234,8 @@ export default function LoginPage() {
                   onChange={(e) => setIdentifier(e.target.value)}
                   className="pr-10 text-right"
                   dir="ltr"
+                  autoComplete="off"
+                  name="tafriz-identifier"
                 />
               </div>
 
@@ -230,6 +247,7 @@ export default function LoginPage() {
                     value={city}
                     onChange={(e) => setCity(e.target.value)}
                     className="pr-10 text-right"
+                    autoComplete="off"
                   />
                 </div>
               )}
@@ -241,10 +259,16 @@ export default function LoginPage() {
                   placeholder="كلمة المرور"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleLoginClick();
+                    }
+                  }}
                   className="pl-10 pr-10 text-right"
                   dir="ltr"
-                  required={mode === "signin"}
-                  autoComplete={mode === "signin" ? "current-password" : "new-password"}
+                  autoComplete="new-password"
+                  name="tafriz-password"
                 />
                 <button
                   type="button"
@@ -281,6 +305,7 @@ export default function LoginPage() {
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     className="pl-10 pr-10 text-right"
                     dir="ltr"
+                    autoComplete="new-password"
                   />
                   <button
                     type="button"
@@ -303,7 +328,13 @@ export default function LoginPage() {
                 </button>
               )}
 
-              <Button type="submit" size="lg" disabled={busy} className="mt-1">
+              <Button
+                type="button"
+                size="lg"
+                disabled={busy}
+                className="mt-1"
+                onClick={handleLoginClick}
+              >
                 {mode === "signin" ? <LogIn className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
                 {busy ? "جاري التحقق..." : mode === "signin" ? "تسجيل الدخول الآن" : "إنشاء الحساب ومتابعة"}
               </Button>

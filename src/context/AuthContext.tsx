@@ -1,6 +1,6 @@
 import * as React from "react";
 import { backend } from "@/lib/backend";
-import { AppUser, IdentifierType } from "@/lib/backend-types";
+import { AppUser, BackendError, IdentifierType } from "@/lib/backend-types";
 
 interface AuthContextValue {
   user: AppUser | null;
@@ -27,9 +27,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(u);
   }, []);
 
+  // لا نستعيد الجلسة القديمة تلقائيًا — الدخول فقط بعد إدخال كلمة المرور
   React.useEffect(() => {
-    refresh().finally(() => setLoading(false));
-  }, [refresh]);
+    let cancelled = false;
+    (async () => {
+      try {
+        await backend.signOut();
+      } catch {
+        // ignore
+      }
+      if (!cancelled) {
+        setUser(null);
+        setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // "نبضة" دورية تحدّث آخر نشاط للمستخدم الحالي — تظهر للمالك في إدارة
   // التحكم ▸ المشتركون ليعرف من يعمل على التطبيق الآن.
@@ -54,7 +69,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function signIn(type: IdentifierType, identifier: string, password: string) {
-    const u = await backend.signIn(type, identifier, password);
+    const pwd = String(password ?? "");
+    if (!pwd.trim()) {
+      throw new BackendError("bad_password", "يرجى إدخال كلمة المرور");
+    }
+    const u = await backend.signIn(type, identifier, pwd);
     setUser(u);
     return u;
   }
