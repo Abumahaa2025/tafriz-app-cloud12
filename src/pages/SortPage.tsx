@@ -20,6 +20,7 @@ import { idbGet, idbRemove, idbSet } from "@/lib/idb";
 import { consumeSharedFile } from "@/lib/shared-file";
 import { listenForNativeSharedFile } from "@/lib/native-import";
 import { backend } from "@/lib/backend";
+import { SPREADSHEET_ACCEPT } from "@/lib/pick-spreadsheet";
 import { useAuth } from "@/context/AuthContext";
 import {
   loadSortLibrary,
@@ -639,7 +640,8 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <FileDropCard
-            label="الداتا"
+            label="استيراد ملف الداتا (Excel)"
+            hint="يفتح مستندات الجهاز (التنزيلات، الملفات، Drive، واتساب) — بدون كاميرا أو صور"
             file={dataFile}
             progress={dataProgress}
             onSelect={handleDataSelect}
@@ -653,7 +655,7 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
           <input
             ref={appendInputRef}
             type="file"
-            accept="*/*"
+            accept={SPREADSHEET_ACCEPT}
             className="hidden"
             onChange={(e) => {
               const f = e.target.files?.[0];
@@ -767,19 +769,32 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
           <CardTitle>ملف الإحالة</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
+          {/* استيراد Excel أولًا — أوضح للمستخدم من اللصق النصي */}
+          <FileDropCard
+            label="استيراد ملف إحالة Excel"
+            hint="اختر ملف .xlsx أو .xls أو .csv من مستندات الجهاز — بدون كاميرا"
+            file={referralFile}
+            progress={referralProgress}
+            onSelect={handleReferralSelect}
+            onClear={() => {
+              setReferralFile(null);
+              setReferralSheet(null);
+              setReferralProgress(null);
+            }}
+          />
 
-          <div className="rounded-xl border border-dashed border-primary/40 p-3">
+          <div className="rounded-xl border border-dashed border-border p-3">
             <button
               type="button"
-              className="flex w-full items-center justify-between text-sm font-bold text-primary"
+              className="flex w-full items-center justify-between text-sm font-bold text-muted-foreground"
               onClick={() => setPasteOpen((v) => !v)}
             >
               <span className="flex items-center gap-1">
                 <ClipboardPaste className="h-4 w-4" />
-                الصق هنا
+                أو الصق اللوحات نصًا
               </span>
-              <span className="text-[11px] font-normal text-muted-foreground">
-                {pasteOpen ? "إخفاء" : "لوحات نصية"}
+              <span className="text-[11px] font-normal">
+                {pasteOpen ? "إخفاء" : "اختياري"}
               </span>
             </button>
             {pasteOpen && (
@@ -799,24 +814,9 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
                     تطبيق اللصق
                   </Button>
                 </div>
-                <p className="text-[11px] text-muted-foreground">
-                  ارفع ملف الإحالة أو الصق اللوحات — سطر واحد لكل لوحة
-                </p>
               </div>
             )}
           </div>
-
-          <FileDropCard
-            label="ملف الإحالة"
-            file={referralFile}
-            progress={referralProgress}
-            onSelect={handleReferralSelect}
-            onClear={() => {
-              setReferralFile(null);
-              setReferralSheet(null);
-              setReferralProgress(null);
-            }}
-          />
 
           {referralSheet && (
             <>

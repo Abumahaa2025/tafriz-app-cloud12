@@ -1,11 +1,17 @@
 import * as React from "react";
-import { FileSpreadsheet, Search, X } from "lucide-react";
+import { FileSpreadsheet, X } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
-import { pickSpreadsheetFile } from "@/lib/pick-spreadsheet";
+import {
+  SPREADSHEET_ACCEPT,
+  isSpreadsheetFile,
+  pickSpreadsheetFile,
+} from "@/lib/pick-spreadsheet";
 
 interface FileDropCardProps {
   label: string;
+  /** نص توضيحي تحت العنوان */
+  hint?: string;
   file: File | { name: string } | null;
   progress: number | null;
   accept?: string;
@@ -15,29 +21,68 @@ interface FileDropCardProps {
 
 export function FileDropCard({
   label,
+  hint = "ملف Excel أو CSV من الملفات / التنزيلات / Drive — بدون كاميرا",
   file,
   progress,
   onSelect,
   onClear,
 }: FileDropCardProps) {
+  const inputRef = React.useRef<HTMLInputElement>(null);
   const [picking, setPicking] = React.useState(false);
   const [pickError, setPickError] = React.useState<string | null>(null);
+
+  function applyFile(chosen: File | null) {
+    if (!chosen) return;
+    if (!isSpreadsheetFile(chosen)) {
+      setPickError("اختر ملف Excel (.xlsx / .xls) أو CSV فقط");
+      return;
+    }
+    setPickError(null);
+    onSelect(chosen);
+  }
 
   async function openPicker() {
     if (picking) return;
     setPickError(null);
     setPicking(true);
     try {
+      // محاولة عبر input ثابت أولاً (أوثق مع إيماءة المستخدم على أندرويد)
+      const el = inputRef.current;
+      if (el) {
+        el.value = "";
+        el.accept = SPREADSHEET_ACCEPT;
+        el.removeAttribute("capture");
+        el.click();
+        return;
+      }
       const chosen = await pickSpreadsheetFile();
-      if (!chosen) return;
-      onSelect(chosen);
+      applyFile(chosen);
     } finally {
-      setPicking(false);
+      // إن فتحنا input الثابت، onChange يعيد الحالة؛ وإلا نغلق picking هنا
+      if (!inputRef.current) setPicking(false);
+      else {
+        // أندرويد أحيانًا يلغي بدون onchange — أعد التفعيل بعد مهلة
+        window.setTimeout(() => setPicking(false), 800);
+      }
     }
   }
 
   return (
     <div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept={SPREADSHEET_ACCEPT}
+        className="sr-only"
+        tabIndex={-1}
+        onChange={(e) => {
+          const f = e.target.files?.[0] ?? null;
+          e.target.value = "";
+          setPicking(false);
+          applyFile(f);
+        }}
+      />
+
       {!file ? (
         <button
           type="button"
@@ -47,11 +92,9 @@ export function FileDropCard({
             "flex w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-border bg-muted/40 py-8 text-muted-foreground transition-colors hover:border-primary hover:bg-secondary/40 disabled:opacity-60"
           )}
         >
-          <Search className="h-6 w-6" />
+          <FileSpreadsheet className="h-7 w-7 text-primary" />
           <span className="text-sm font-bold">{picking ? "جارٍ فتح الملفات..." : label}</span>
-          <span className="px-4 text-center text-[11px] leading-4">
-            يفتح ملفات الجهاز والتطبيقات (التنزيلات، Drive، واتساب…) — وليس الكاميرا
-          </span>
+          <span className="px-4 text-center text-[11px] leading-4">{hint}</span>
         </button>
       ) : (
         <div className="flex items-center justify-between rounded-xl border border-primary/30 bg-secondary/40 px-4 py-3">
@@ -69,7 +112,7 @@ export function FileDropCard({
             className="flex flex-1 flex-col items-end gap-0.5 text-right"
           >
             <span className="truncate text-sm font-bold">{file.name}</span>
-            <span className="text-xs text-muted-foreground">اضغط لاختيار ملف آخر من الملفات/التطبيقات</span>
+            <span className="text-xs text-muted-foreground">اضغط لاختيار ملف Excel آخر</span>
           </button>
           <button
             type="button"

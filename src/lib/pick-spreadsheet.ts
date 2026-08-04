@@ -1,61 +1,60 @@
 /**
- * منتقي ملفات جداول (xlsx/xls/csv) متوافق مع أندرويد:
- * الامتدادات الضيقة وحدها كثيرًا ما تفتح الكاميرا/المعرض بدل مستكشف الملفات.
+ * منتقي جداول Excel/CSV لأندرويد وChrome:
+ * تجنّب accept للكل أو للصور وخاصية capture — لأنها تفتح الكاميرا/المعرض.
  */
 
 const SPREADSHEET_EXT = /\.(xlsx|xls|xlsb|csv|ods)$/i;
 
-/** MIME + امتدادات للمستندات — بدون image/* حتى لا تظهر الكاميرا */
-export const SPREADSHEET_ACCEPT_DESKTOP =
-  ".xlsx,.xls,.xlsb,.csv,.ods," +
+/**
+ * MIME + امتدادات للمستندات فقط.
+ * على أندرويد يفتح «الملفات / My Files / Drive» وليس الكاميرا.
+ */
+export const SPREADSHEET_ACCEPT =
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet," +
   "application/vnd.ms-excel," +
   "application/vnd.ms-excel.sheet.binary.macroEnabled.12," +
   "application/vnd.oasis.opendocument.spreadsheet," +
-  "text/csv,text/comma-separated-values,application/csv,text/plain," +
-  "application/octet-stream";
-
-/** على الجوال: accept نجمي يفتح قائمة تطبيقات النظام (الملفات، Drive، التنزيلات، واتساب...) */
-export const SPREADSHEET_ACCEPT_MOBILE = "*/*";
+  "text/csv," +
+  "text/comma-separated-values," +
+  "application/csv," +
+  ".xlsx,.xls,.xlsb,.csv,.ods";
 
 export function isMobileFilePicker(): boolean {
   if (typeof navigator === "undefined") return false;
-  const ua = navigator.userAgent || "";
-  return /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "");
 }
 
 export function isSpreadsheetFile(file: File): boolean {
   if (SPREADSHEET_EXT.test(file.name)) return true;
   const t = (file.type || "").toLowerCase();
-  if (!t) return true; // أندرويد أحيانًا لا يرسل MIME — نسمح بالاسم لاحقًا
+  if (!t) return true;
   return (
     t.includes("sheet") ||
     t.includes("excel") ||
     t.includes("csv") ||
     t === "application/octet-stream" ||
     t === "text/plain" ||
-    t === "application/zip" // بعض xlsx تُبلَّغ كـ zip
+    t === "application/zip"
   );
 }
 
 type FilePickerWindow = Window & {
   showOpenFilePicker?: (options?: {
     multiple?: boolean;
-    types?: { description: string; accept: Record<string, string[]> }[];
     excludeAcceptAllOption?: boolean;
+    types?: { description: string; accept: Record<string, string[]> }[];
   }) => Promise<{ getFile: () => Promise<File> }[]>;
 };
 
 /**
- * يفتح منتقي ملفات يفضّل مستندات الجهاز/التطبيقات على الجوال.
- * يُرجع الملف أو null إذا ألغى المستخدم أو رفض النوع.
+ * يفتح منتقي مستندات Excel/CSV (بدون كاميرا/معرض).
  */
 export function pickSpreadsheetFile(): Promise<File | null> {
   return new Promise((resolve) => {
     const mobile = isMobileFilePicker();
     const win = window as FilePickerWindow;
 
-    // showOpenFilePicker غير موثوق على أندرويد — نتجاوزه للجوال
+    // سطح المكتب فقط — على الجوال نستخدم input بـ MIME مستندات
     if (!mobile && typeof win.showOpenFilePicker === "function") {
       win
         .showOpenFilePicker({
@@ -63,7 +62,7 @@ export function pickSpreadsheetFile(): Promise<File | null> {
           excludeAcceptAllOption: false,
           types: [
             {
-              description: "جداول بيانات",
+              description: "ملفات Excel",
               accept: {
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
                 "application/vnd.ms-excel": [".xls", ".xlsb"],
@@ -82,31 +81,33 @@ export function pickSpreadsheetFile(): Promise<File | null> {
             resolve(null);
             return;
           }
-          // فشل API — نكمل على input عادي
-          openInput(resolve, mobile);
+          openDocumentInput(resolve);
         });
       return;
     }
 
-    openInput(resolve, mobile);
+    openDocumentInput(resolve);
   });
 }
 
-function openInput(resolve: (file: File | null) => void, mobile: boolean) {
+function openDocumentInput(resolve: (file: File | null) => void) {
   const input = document.createElement("input");
   input.type = "file";
-  // مهم: لا نضع capture إطلاقًا
-  input.accept = mobile ? SPREADSHEET_ACCEPT_MOBILE : SPREADSHEET_ACCEPT_DESKTOP;
   input.multiple = false;
-  // يساعد بعض متصفحات أندرويد على تفضيل مستندات لا وسائط
-  input.setAttribute("data-document-picker", "1");
+  // لا تستخدم قبول الكل أو الصور أو capture
+  input.accept = SPREADSHEET_ACCEPT;
+  input.removeAttribute("capture");
 
   let settled = false;
   const finish = (file: File | null) => {
     if (settled) return;
     settled = true;
+    try {
+      input.remove();
+    } catch {
+      /* ignore */
+    }
     resolve(file);
-    input.remove();
   };
 
   input.onchange = () => {
@@ -115,26 +116,13 @@ function openInput(resolve: (file: File | null) => void, mobile: boolean) {
       finish(null);
       return;
     }
-    if (!isSpreadsheetFile(file) && !SPREADSHEET_EXT.test(file.name)) {
-      // على */* قد يختار صورة بالخطأ
-      finish(null);
-      return;
-    }
-    finish(file);
+    finish(isSpreadsheetFile(file) ? file : null);
   };
 
-  // إلغاء بدون onchange على بعض الأجهزة
-  window.setTimeout(() => {
-    input.addEventListener(
-      "cancel",
-      () => finish(null),
-      { once: true }
-    );
-  }, 0);
+  input.addEventListener("cancel", () => finish(null), { once: true });
 
-  input.style.position = "fixed";
-  input.style.left = "-9999px";
-  input.style.opacity = "0";
+  // إبقاء العنصر في الـ DOM أثناء فتح المنتقي (أوثق على أندرويد)
+  input.style.cssText = "position:fixed;left:-9999px;top:0;opacity:0;width:1px;height:1px;";
   document.body.appendChild(input);
   input.click();
 }
