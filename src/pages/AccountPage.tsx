@@ -1,10 +1,11 @@
 import * as React from "react";
-import { ArrowRight, UserCircle2, ShieldCheck, LogOut, KeyRound } from "lucide-react";
+import { UserCircle2, ShieldCheck, LogOut, KeyRound } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { ContactAdminCard } from "@/components/ContactAdminCard";
+import { PageBackHeader } from "@/components/PageBackHeader";
 import { useAuth } from "@/context/AuthContext";
 import { backend } from "@/lib/backend";
 import {
@@ -38,12 +39,7 @@ export default function AccountPage({
 
   return (
     <div className="mx-auto flex max-w-md flex-col gap-4 px-4 pb-28 pt-4">
-      <header className="flex items-center gap-2 py-2">
-        <button onClick={onBack} className="text-muted-foreground">
-          <ArrowRight className="h-5 w-5" />
-        </button>
-        <h1 className="text-lg font-black">الحساب</h1>
-      </header>
+      <PageBackHeader title="الحساب" onBack={onBack} />
 
       <Card>
         <CardContent className="flex flex-col items-center gap-2 pt-6">

@@ -1,7 +1,8 @@
 import * as React from "react";
-import { ArrowRight, Search, Database, FileSpreadsheet } from "lucide-react";
+import { Search, Database, FileSpreadsheet } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { PageBackHeader } from "@/components/PageBackHeader";
 import { backend } from "@/lib/backend";
 import { SortHistoryEntry, SortHistorySearchHit, UploadedSheetEntry, UploadSearchHit } from "@/lib/backend-types";
 
@@ -40,12 +41,7 @@ export default function DatabasePage({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="mx-auto flex max-w-md flex-col gap-4 px-4 pb-28 pt-4">
-      <header className="flex items-center gap-2 py-2">
-        <button onClick={onBack} className="text-muted-foreground">
-          <ArrowRight className="h-5 w-5" />
-        </button>
-        <h1 className="text-lg font-black">قاعدة البيانات</h1>
-      </header>
+      <PageBackHeader title="قاعدة البيانات" onBack={onBack} />
 
       <div className="relative">
         <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

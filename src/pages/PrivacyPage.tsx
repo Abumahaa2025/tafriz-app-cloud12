@@ -1,6 +1,7 @@
 import * as React from "react";
-import { ArrowRight, ShieldCheck, Database, Lock, UserCog, FileWarning, Mail } from "lucide-react";
+import { ShieldCheck, Database, Lock, UserCog, FileWarning, Mail } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { PageBackHeader } from "@/components/PageBackHeader";
 
 const SECTIONS: { icon: React.ElementType; title: string; body: string }[] = [
   {
@@ -50,12 +51,7 @@ const SECTIONS: { icon: React.ElementType; title: string; body: string }[] = [
 export default function PrivacyPage({ onBack }: { onBack: () => void }) {
   return (
     <div className="mx-auto flex max-w-md flex-col gap-4 px-4 pb-28 pt-4">
-      <header className="flex items-center gap-2 py-2">
-        <button onClick={onBack} className="text-muted-foreground">
-          <ArrowRight className="h-5 w-5" />
-        </button>
-        <h1 className="text-lg font-black">الخصوصية</h1>
-      </header>
+      <PageBackHeader title="الخصوصية" onBack={onBack} />
 
       {SECTIONS.map((s) => {
         const Icon = s.icon;

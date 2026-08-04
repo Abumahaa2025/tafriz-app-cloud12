@@ -63,7 +63,7 @@ function MainApp() {
       {overlay === "account" && (
         <AccountPage onBack={() => setOverlay(null)} onOpenAdmin={() => setOverlay("admin")} />
       )}
-      {overlay === "admin" && user?.isOwner && <AdminPage onBack={() => setOverlay("account")} />}
+      {overlay === "admin" && user?.isOwner && <AdminPage onBack={() => setOverlay(null)} />}
       {overlay === "privacy" && <PrivacyPage onBack={() => setOverlay(null)} />}
       {overlay === "database" && <DatabasePage onBack={() => setOverlay(null)} />}
     </div>

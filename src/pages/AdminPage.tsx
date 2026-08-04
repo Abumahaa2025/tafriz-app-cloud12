@@ -1,6 +1,5 @@
 import * as React from "react";
 import {
-  ArrowRight,
   Check,
   Ban,
   ShieldCheck,
@@ -18,6 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { PageBackHeader } from "@/components/PageBackHeader";
 import { backend } from "@/lib/backend";
 import { AppUser, FeedbackItem, ErrorReportItem, ActivationCode } from "@/lib/backend-types";
 import { getSupportPhones, setSupportPhones, SupportPhone } from "@/lib/support-contact";
@@ -31,7 +31,7 @@ const STATUS_LABEL: Record<AppUser["status"], string> = {
 
 type AdminTab = "subscribers" | "feedback" | "broadcast" | "errors" | "codes" | "settings";
 
-export default function AdminPage({ onBack }: { onBack?: () => void }) {
+export default function AdminPage({ onBack }: { onBack: () => void }) {
   const [tab, setTab] = React.useState<AdminTab>("subscribers");
   const [users, setUsers] = React.useState<AppUser[]>([]);
   const [feedback, setFeedback] = React.useState<FeedbackItem[]>([]);
@@ -101,15 +101,11 @@ export default function AdminPage({ onBack }: { onBack?: () => void }) {
 
   return (
     <div className="mx-auto flex max-w-md flex-col gap-4 px-4 pb-28 pt-4">
-      <header className="flex items-center gap-2 py-2">
-        {onBack && (
-          <button onClick={onBack} className="text-muted-foreground">
-            <ArrowRight className="h-5 w-5" />
-          </button>
-        )}
-        <ShieldCheck className="h-5 w-5 text-primary" />
-        <h1 className="text-lg font-black">إدارة التحكم</h1>
-      </header>
+      <PageBackHeader
+        title="إدارة التحكم"
+        onBack={onBack}
+        icon={<ShieldCheck className="h-5 w-5 shrink-0 text-primary" />}
+      />
 
       {/* ملخص سريع */}
       <div className="grid grid-cols-3 gap-2">
