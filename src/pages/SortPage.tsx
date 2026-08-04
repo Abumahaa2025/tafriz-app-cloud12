@@ -20,7 +20,7 @@ import { idbGet, idbRemove, idbSet } from "@/lib/idb";
 import { consumeSharedFile } from "@/lib/shared-file";
 import { listenForNativeSharedFile } from "@/lib/native-import";
 import { backend } from "@/lib/backend";
-import { spreadsheetAcceptForDevice } from "@/lib/pick-spreadsheet";
+import { spreadsheetAcceptForDevice, pickSpreadsheetFile } from "@/lib/pick-spreadsheet";
 import { useAuth } from "@/context/AuthContext";
 import {
   loadSortLibrary,
@@ -336,7 +336,10 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
 
   function requestAppend(id: string) {
     appendTargetId.current = id;
-    appendInputRef.current?.click();
+    void pickSpreadsheetFile().then((f) => {
+      if (f) void handleAppendFile(f);
+      else appendTargetId.current = null;
+    });
   }
 
   async function handleAppendFile(file: File) {

@@ -1,8 +1,9 @@
 import * as React from "react";
 import { Download, Upload, MessageCircle } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { nativeShareText } from "@/lib/native-share";
-import { pickSpreadsheetFile, spreadsheetAcceptForDevice } from "@/lib/pick-spreadsheet";
+import { isSpreadsheetFile, spreadsheetAcceptForDevice } from "@/lib/pick-spreadsheet";
+import { cn } from "@/lib/utils";
 
 interface ImportExportBarProps {
   /** Called with the picked file so the parent can route it into its own upload logic. */
@@ -17,13 +18,12 @@ type NavShare = Navigator & {
   share?: (data: ShareData) => Promise<void>;
 };
 
-
 export function ImportExportBar({
   onImport,
   buildExportText,
   exportFileName = "نتائج-الفرز.txt",
 }: ImportExportBarProps) {
-  const inputRef = React.useRef<HTMLInputElement>(null);
+  const importId = React.useId();
   const [status, setStatus] = React.useState<string | null>(null);
 
   function flashStatus(msg: string) {
@@ -34,27 +34,21 @@ export function ImportExportBar({
   async function handleExport() {
     const text = buildExportText();
 
-    // لو التطبيق مبني كتطبيق أندرويد/آيفون حقيقي (Capacitor)، هذا يفتح
-    // قائمة المشاركة الحقيقية لنظام التشغيل نفسه (واتساب يظهر فيها دائمًا).
     const usedNativeShare = await nativeShareText(exportFileName, text, "نتائج الفرز");
     if (usedNativeShare) return;
 
     const file = new File([text], exportFileName, { type: "text/plain" });
     const nav = navigator as NavShare;
 
-    // المحاولة الأولى: مشاركة الملف نفسه — تفتح قائمة تطبيقات النظام
-    // (واتساب، البريد، درايف...) مباشرة على الجوال وعلى ويندوز 10/11.
     if (nav.share) {
       if (nav.canShare?.({ files: [file] })) {
         try {
           await nav.share({ files: [file], title: "نتائج الفرز", text });
           return;
         } catch (err) {
-          if (err instanceof Error && err.name === "AbortError") return; // المستخدم ألغى بنفسه
+          if (err instanceof Error && err.name === "AbortError") return;
         }
       }
-      // المحاولة الثانية: مشاركة نص فقط (بعض المتصفحات/الأنظمة تدعم النص
-      // ولا تدعم الملفات، لكنها تفتح نفس قائمة التطبيقات).
       try {
         await nav.share({ title: "نتائج الفرز", text });
         return;
@@ -63,7 +57,6 @@ export function ImportExportBar({
       }
     }
 
-    // آخر حل: تنزيل الملف (متصفحات لا تدعم المشاركة إطلاقًا، مثل بعض متصفحات سطح المكتب)
     const url = URL.createObjectURL(file);
     const a = document.createElement("a");
     a.href = url;
@@ -73,40 +66,39 @@ export function ImportExportBar({
     flashStatus("متصفحك لا يدعم قائمة المشاركة، تم تنزيل الملف بدل ذلك");
   }
 
-
-  /** زر مباشر لواتساب كما في نسخة كلاود / الفيديو */
   function handleOpenWhatsApp() {
     const text = buildExportText();
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
   }
 
-  async function handleImport() {
-    const file = await pickSpreadsheetFile();
-    if (!file) {
-      flashStatus("اختر ملف Excel/CSV من الملفات أو التطبيقات");
+  function onImportChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    if (!isSpreadsheetFile(f)) {
+      flashStatus("اختر ملف Excel أو CSV من الملفات — وليس الكاميرا");
       return;
     }
-    onImport(file);
+    onImport(f);
   }
 
   return (
     <div className="flex flex-col gap-1">
       <div className="flex gap-2">
-        <input
-          ref={inputRef}
-          type="file"
-          accept={spreadsheetAcceptForDevice()}
-          className="hidden"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) onImport(f);
-            e.target.value = "";
-          }}
-        />
-        <Button variant="secondary" className="flex-1" onClick={handleImport}>
+        <label
+          htmlFor={importId}
+          className={cn(buttonVariants({ variant: "secondary" }), "flex-1 cursor-pointer")}
+        >
+          <input
+            id={importId}
+            type="file"
+            accept={spreadsheetAcceptForDevice()}
+            className="sr-only"
+            onChange={onImportChange}
+          />
           <Upload className="h-4 w-4" />
           استيراد
-        </Button>
+        </label>
         <Button variant="secondary" className="flex-1" onClick={handleExport}>
           <Download className="h-4 w-4" />
           تصدير

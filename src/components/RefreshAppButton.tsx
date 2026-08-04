@@ -24,7 +24,10 @@ export function RefreshAppButton({ className }: { className?: string }) {
     } catch {
       // تجاهل أخطاء الكاش — أعد التحميل على أي حال
     }
-    window.location.reload();
+    // تحميل قسري بمسار جديد لكسر كاش الجوال/PWA
+    const url = new URL(window.location.href);
+    url.searchParams.set("_r", String(Date.now()));
+    window.location.replace(url.toString());
   }
 
   return (

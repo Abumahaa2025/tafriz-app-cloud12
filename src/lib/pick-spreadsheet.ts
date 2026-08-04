@@ -24,7 +24,13 @@ export const SPREADSHEET_ACCEPT = SPREADSHEET_ACCEPT_DESKTOP;
 
 export function isMobileFilePicker(): boolean {
   if (typeof navigator === "undefined") return false;
-  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "");
+  const ua = navigator.userAgent || "";
+  if (/Android|iPhone|iPad|iPod|Mobile|webOS|BlackBerry|IEMobile|Opera Mini/i.test(ua)) {
+    return true;
+  }
+  // كروم أندرويد أحيانًا بدون كلمة Mobile في UA
+  if (/Android/i.test(ua)) return true;
+  return false;
 }
 
 export function spreadsheetAcceptForDevice(): string {
