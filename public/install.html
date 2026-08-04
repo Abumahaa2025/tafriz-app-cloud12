@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>تثبيت تطبيق الفرز</title>
+    <meta name="theme-color" content="#0d7d6f" />
+    <link rel="icon" type="image/png" href="/icon-192-v3.png" />
+    <style>
+      :root {
+        --bg: #f4f7f6;
+        --card: #ffffff;
+        --primary: #0d7d6f;
+        --text: #1a2b28;
+        --muted: #5b6b67;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: Tahoma, "Segoe UI", Arial, sans-serif;
+        background: linear-gradient(180deg, #e7f3f0 0%, var(--bg) 40%);
+        color: var(--text);
+        min-height: 100vh;
+        padding: 24px 16px 40px;
+      }
+      .wrap { max-width: 420px; margin: 0 auto; }
+      .brand {
+        display: flex; align-items: center; justify-content: center; gap: 12px;
+        margin-bottom: 20px;
+      }
+      .brand img {
+        width: 64px; height: 64px; border-radius: 16px;
+        border: 1px solid rgba(13,125,111,.25);
+      }
+      h1 { font-size: 1.35rem; margin: 0; color: var(--primary); }
+      .card {
+        background: var(--card);
+        border-radius: 18px;
+        padding: 18px 16px;
+        box-shadow: 0 8px 24px rgba(13,125,111,.08);
+        border: 1px solid rgba(13,125,111,.12);
+        margin-bottom: 14px;
+      }
+      p { margin: 0 0 10px; line-height: 1.7; color: var(--muted); font-size: 0.95rem; }
+      ol { margin: 0; padding-right: 18px; color: var(--text); line-height: 1.8; }
+      .btn {
+        display: block; width: 100%; text-align: center; text-decoration: none;
+        background: var(--primary); color: #fff; font-weight: 700;
+        border-radius: 14px; padding: 14px 16px; margin-top: 12px;
+      }
+      .btn.secondary {
+        background: #fff; color: var(--primary);
+        border: 1.5px solid var(--primary); margin-top: 10px;
+      }
+      .note {
+        font-size: 0.82rem; color: #8a4b00; background: #fff7e8;
+        border: 1px solid #f0d39a; border-radius: 12px; padding: 10px 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="brand">
+        <img src="/icon-512-v3.png" alt="الفرز" />
+        <div>
+          <h1>تثبيت تطبيق الفرز</h1>
+          <div style="color:var(--muted);font-size:0.85rem">شعار tafriz car — آخر نسخة</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <p class="note">
+          مهم: إذا ظهرت رسالة «تعذّر التثبيت / الملف غير مثبت» احذف أي نسخة قديمة من «تفريز/الفرز» أولًا، ثم ثبّت من الزر أدناه.
+        </p>
+        <ol>
+          <li>احذف التطبيق القديم من الجوال (إن وُجد).</li>
+          <li>افتح إعدادات الجوال واسمح بالتثبيت من هذا المصدر عند الطلب.</li>
+          <li>اضغط «تحميل وتثبيت APK».</li>
+          <li>بعد التثبيت افتح التطبيق واضغط زر التحديث أعلى الصفحة.</li>
+        </ol>
+        <a class="btn" href="/downloads/Tafriz.apk" download="Tafriz.apk">تحميل وتثبيت APK</a>
+        <a class="btn secondary" href="/">فتح النسخة الويب مباشرة</a>
+      </div>
+
+      <div class="card">
+        <p>
+          بعد تثبيت هذه النسخة، معظم التحديثات (الاستيراد، الفرز، التشيك…) تصل تلقائيًا من السحابة بدون تنزيل APK جديد.
+          تغيير أيقونة المشغّل فقط قد يحتاج APK جديد نادرًا.
+        </p>
+      </div>
+    </div>
+  </body>
+</html>

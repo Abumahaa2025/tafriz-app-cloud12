@@ -108,10 +108,12 @@ function openDocumentInput(resolve: (file: File | null) => void) {
   input.type = "file";
   input.multiple = false;
 
-  const accept = spreadsheetAcceptForDevice();
-  // setAttribute أوثق من الخاصية على بعض WebView أندرويد
-  input.setAttribute("accept", accept);
-  input.accept = accept;
+  // أندرويد: بدون accept لمنع Intent الكاميرا/المعرض على أجهزة OEM
+  if (!isMobileFilePicker()) {
+    const accept = spreadsheetAcceptForDevice();
+    input.setAttribute("accept", accept);
+    input.accept = accept;
+  }
   input.removeAttribute("capture");
 
   let settled = false;
@@ -138,7 +140,6 @@ function openDocumentInput(resolve: (file: File | null) => void) {
 
   input.addEventListener("cancel", () => finish(null), { once: true });
 
-  // إن أغلق المستخدم المنتقي بدون onchange/cancel
   const onFocusCheck = () => {
     window.setTimeout(() => {
       if (!settled && !input.files?.length) finish(null);
@@ -146,11 +147,8 @@ function openDocumentInput(resolve: (file: File | null) => void) {
   };
   window.addEventListener("focus", onFocusCheck, { once: true });
 
-  // مرئي بصفر شفافية داخل الشاشة — بعض أجهزة سامسونج تتجاهل input خارج الشاشة
   input.style.cssText =
     "position:fixed;inset:0;width:100%;height:100%;opacity:0.001;z-index:2147483647;pointer-events:none;";
   document.body.appendChild(input);
-
-  // نقرة متزامنة ضمن إيماءة المستخدم
   input.click();
 }

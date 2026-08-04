@@ -3,14 +3,13 @@ import { FileSpreadsheet, X } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import {
+  isMobileFilePicker,
   isSpreadsheetFile,
-  SPREADSHEET_ACCEPT_MOBILE,
   spreadsheetAcceptForDevice,
 } from "@/lib/pick-spreadsheet";
 
 interface FileDropCardProps {
   label: string;
-  /** نص توضيحي تحت العنوان */
   hint?: string;
   file: File | { name: string } | null;
   progress: number | null;
@@ -20,26 +19,30 @@ interface FileDropCardProps {
 }
 
 /**
- * استيراد Excel عبر <label> مرتبط بـ input —
- * أوثق على سامسونج/أندرويد من input.click() البرمجي الذي يفتح الكاميرا أحيانًا.
+ * استيراد Excel:
+ * - على أندرويد: بدون accept (يمنع قائمة الكاميرا على سامسونج/بعض الأجهزة)
+ * - اختيار الملف عبر <label> أصلي مرتبط بـ input
+ * - التحقق من امتداد Excel بعد الاختيار
  */
 export function FileDropCard({
   label,
-  hint = "اضغط لاختيار Excel من الملفات أو التنزيلات أو Drive",
+  hint,
   file,
   progress,
   onSelect,
   onClear,
 }: FileDropCardProps) {
   const inputId = React.useId();
-  const inputRef = React.useRef<HTMLInputElement>(null);
   const [pickError, setPickError] = React.useState<string | null>(null);
-  const accept = spreadsheetAcceptForDevice() || SPREADSHEET_ACCEPT_MOBILE;
+  const mobile = isMobileFilePicker();
+  const defaultHint = mobile
+    ? "يفتح مدير الملفات — اختر ملف .xlsx أو .xls (تجاهل الكاميرا إن ظهرت)"
+    : "ملف Excel من الملفات / التنزيلات / Drive";
 
   function applyFile(chosen: File | null) {
     if (!chosen) return;
     if (!isSpreadsheetFile(chosen)) {
-      setPickError("اختر ملف Excel (.xlsx / .xls) أو CSV فقط — وليس صورة أو فيديو");
+      setPickError("هذا ليس ملف Excel. اختر ملفًا ينتهي بـ .xlsx أو .xls أو .csv");
       return;
     }
     setPickError(null);
@@ -55,11 +58,10 @@ export function FileDropCard({
   const fileInput = (
     <input
       id={inputId}
-      ref={inputRef}
       type="file"
-      accept={accept}
+      // أندرويد: لا تضع accept — MIME/الامتدادات تفتح الكاميرا على أجهزة كثيرة
+      {...(mobile ? {} : { accept: spreadsheetAcceptForDevice() })}
       className="sr-only"
-      // لا تستخدم capture أبدًا
       onChange={onInputChange}
     />
   );
@@ -76,7 +78,7 @@ export function FileDropCard({
           {fileInput}
           <FileSpreadsheet className="h-7 w-7 text-primary" />
           <span className="text-sm font-bold">{label}</span>
-          <span className="px-4 text-center text-[11px] leading-4">{hint}</span>
+          <span className="px-4 text-center text-[11px] leading-4">{hint ?? defaultHint}</span>
         </label>
       ) : (
         <div className="flex items-center justify-between rounded-xl border border-primary/30 bg-secondary/40 px-4 py-3">

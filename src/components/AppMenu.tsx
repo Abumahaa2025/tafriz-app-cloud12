@@ -1,5 +1,5 @@
 import * as React from "react";
-import { X, Home, UserCircle2, Lock, Database, ShieldCheck } from "lucide-react";
+import { X, Home, UserCircle2, Lock, Database, ShieldCheck, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type MenuTarget = "home" | "account" | "privacy" | "database" | "admin";
@@ -58,6 +58,14 @@ export function AppMenu({
             </button>
           );
         })}
+        <a
+          href="/install.html"
+          onClick={onClose}
+          className="mt-2 flex items-center gap-3 rounded-xl border border-primary/20 bg-secondary/40 px-3 py-3 text-right text-sm font-bold text-primary hover:bg-secondary"
+        >
+          <Download className="h-5 w-5" />
+          تثبيت تطبيق أندرويد
+        </a>
       </div>
     </div>
   );

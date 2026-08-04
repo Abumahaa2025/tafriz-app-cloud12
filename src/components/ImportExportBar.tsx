@@ -2,7 +2,7 @@ import * as React from "react";
 import { Download, Upload, MessageCircle } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { nativeShareText } from "@/lib/native-share";
-import { isSpreadsheetFile, spreadsheetAcceptForDevice } from "@/lib/pick-spreadsheet";
+import { isMobileFilePicker, isSpreadsheetFile, spreadsheetAcceptForDevice } from "@/lib/pick-spreadsheet";
 import { cn } from "@/lib/utils";
 
 interface ImportExportBarProps {
@@ -25,6 +25,7 @@ export function ImportExportBar({
 }: ImportExportBarProps) {
   const importId = React.useId();
   const [status, setStatus] = React.useState<string | null>(null);
+  const mobile = isMobileFilePicker();
 
   function flashStatus(msg: string) {
     setStatus(msg);
@@ -92,7 +93,7 @@ export function ImportExportBar({
           <input
             id={importId}
             type="file"
-            accept={spreadsheetAcceptForDevice()}
+            {...(mobile ? {} : { accept: spreadsheetAcceptForDevice() })}
             className="sr-only"
             onChange={onImportChange}
           />
