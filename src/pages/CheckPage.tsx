@@ -157,7 +157,7 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
     idbRemove(CHECK_IDB_KEY).catch(() => {});
   }
 
-  function tryLookup(raw: string, voice = false): "exact" | "similar" | false {
+  function tryLookup(raw: string, voice = false): "exact" | "similar" | "need_digits" | false {
     if (!voice) {
       const hit = lookupPlate(index, raw);
       if (!hit) return false;
@@ -170,6 +170,15 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
     }
     const result = lookupPlateVoiceDetailed(index, raw);
     if (result.status === "none") return false;
+    if (result.status === "need_digits") {
+      const tip =
+        result.count > 1
+          ? `تم التقاط «${result.query}» — وُجدت ${result.count} لوحة، أكمل بنطق الرقم`
+          : `تم التقاط «${result.query}» — أكمل بنطق رقم اللوحة`;
+      setSpeechError(tip);
+      setInterim(result.query);
+      return "need_digits";
+    }
     setFound(result.row);
     setDetailOpen(true);
     setHitsLog((prev) =>
@@ -209,21 +218,28 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
     }
     const handle = startPlateSpeech({
       onFinal: (transcript, candidates) => {
+        let sawNeedDigits = false;
         for (const c of candidates) {
           if (!c) continue;
           const outcome = tryLookup(c, true);
-          if (outcome) {
+          if (outcome === "exact" || outcome === "similar") {
             setInterim("");
             speechRef.current?.stop();
             speechRef.current = null;
             setChecking(false);
             return;
           }
+          if (outcome === "need_digits") {
+            sawNeedDigits = true;
+            // استمر في الاستماع لإكمال الرقم
+            continue;
+          }
         }
+        if (sawNeedDigits) return;
         if (candidates.some((c) => c && c.length >= 2) || transcript.trim().length >= 2) {
-          const tip = "حاول إدخال أحرف منفصلة أو رقم";
+          const tip = "لم تُوجد مطابقة بعد — انطق الحروف ثم الرقم (مثال: س هـ ص ثم 5613)";
           setSpeechError(tip);
-          window.setTimeout(() => setSpeechError((prev) => (prev === tip ? null : prev)), 3200);
+          window.setTimeout(() => setSpeechError((prev) => (prev === tip ? null : prev)), 4200);
         }
       },
       onInterim: setInterim,

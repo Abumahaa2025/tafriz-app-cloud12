@@ -253,6 +253,9 @@ function stripAl(p: string): string {
 function resolveSpokenPart(part: string): string | null {
   let p = part.trim();
   if (!p) return null;
+  // إزالة التطويل والتشكيل الشائع من النطق (هـ → ه)
+  p = p.replace(/ـ/g, "").replace(/[\u064B-\u065F\u0670]/g, "");
+  p = p.replace(/[أإآٱ]/g, "ا").replace(/ة/g, "ه").replace(/ى/g, "ي");
   const lower = p.toLowerCase();
   if (SKIP_WORDS.has(p) || SKIP_WORDS.has(lower)) return null;
 
@@ -342,9 +345,18 @@ export function speechToPlateCandidates(raw: string): string[] {
   return rankPlateCandidates([...out]);
 }
 
-const VOICE_COMMIT_MS = 1400;
+const VOICE_COMMIT_MS = 1600;
+/** عند حروف فقط ننتظر أطول قليلًا لإتاحة نطق الرقم */
+const VOICE_COMMIT_LETTERS_MS = 2800;
 
-/** يجمّع المقاطع بالترتيب: 12 ثم 35 → 1235، مع تأخير قبل اعتماد النتيجة */
+function commitDelayForToken(token: string): number {
+  if (!token) return VOICE_COMMIT_MS;
+  const hasDigit = /\d/.test(token);
+  const lettersOnly = !hasDigit && /[\u0600-\u06FFa-zA-Z]/.test(token);
+  return lettersOnly ? VOICE_COMMIT_LETTERS_MS : VOICE_COMMIT_MS;
+}
+
+/** يجمّع المقاطع بالترتيب: س ثم ه ثم ص ثم 5613 → سهص5613 */
 export function createSpeechPlateBuffer() {
   let chunks: string[] = [];
   return {
@@ -373,16 +385,25 @@ export function createSpeechPlateBuffer() {
           // تكرار لبادئة — تجاهل
         } else if (joined.endsWith(token) && token.length > 1) {
           // تكرار لنفس المقطع — تجاهل
+        } else if (token === joined) {
+          // تكرار كامل — تجاهل
         } else {
           // ألحق بالترتيب المنطوق (الأول فالأول)
           for (const p of parts) {
             if (chunks.length && chunks[chunks.length - 1] === p) continue;
+            // لا تُلحق حرفًا مكررًا إذا كان المخزن حروفًا فقط وانتهى بنفس الحرف
+            if (
+              chunks.length &&
+              /^[\u0600-\u06FFa-zA-Z]$/.test(p) &&
+              chunks[chunks.length - 1] === p
+            ) {
+              continue;
+            }
             chunks.push(p);
           }
         }
       }
       const buffer = chunks.join("");
-      // مرشح البحث = المخزن المجمع فقط (يحافظ على 12+35 وليس 35+12)
       return buffer ? [normalizePlate(buffer) || buffer] : [];
     },
   };
@@ -425,19 +446,23 @@ export function startPlateSpeech(opts: {
           if (t) transcripts.push(t);
         }
         if (transcripts.length === 0) continue;
-        const ranked = plateBuf.ingest([transcripts[0]]);
-        // أظهر التجميع الحالي فورًا
-        if (plateBuf.value) opts.onInterim?.(plateBuf.value);
-        // انتظر اكتمال المقاطع (12 … ثم 35) قبل اعتماد النتيجة — يمنع التقاط 10 قبل 20
+        // كل البدائل — أحيانًا الأولى كلمة خاطئة والثانية الحرف الصحيح
+        const ranked = plateBuf.ingest(transcripts);
+        const display = plateBuf.value
+          ? plateBuf.chunks.join(" ")
+          : transcripts[0];
+        if (display) opts.onInterim?.(display);
         if (commitTimer) clearTimeout(commitTimer);
         const heard = transcripts[0];
+        const tokenNow = plateBuf.value;
         commitTimer = setTimeout(() => {
           if (stopped) return;
           const finalCandidates = plateBuf.value
-            ? [normalizePlate(plateBuf.value) || plateBuf.value]
+            ? [normalizePlate(plateBuf.value) || plateBuf.value, ...ranked]
             : ranked;
-          opts.onFinal(heard, finalCandidates);
-        }, VOICE_COMMIT_MS);
+          const unique = [...new Set(finalCandidates.filter(Boolean))];
+          opts.onFinal(heard, unique);
+        }, commitDelayForToken(tokenNow));
       } else {
         interim += result[0]?.transcript ?? "";
       }

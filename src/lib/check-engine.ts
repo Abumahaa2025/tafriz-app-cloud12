@@ -80,8 +80,35 @@ function plateDigits(raw: string): string {
   return normalizeSearchText(raw).replace(/[^0-9]/g, "");
 }
 
+/** حروف اللوحة بالترتيب الظاهر (مهم للمطابقة الصوتية حرفًا حرفًا) */
+function plateLettersOrdered(raw: string): string {
+  const n = normalizeSearchText(raw);
+  const ordered: string[] = [];
+  const seenBlocks = new Set<string>();
+
+  for (const t of n.split(/\s+/)) {
+    if (/^[\u0600-\u06FFa-z]$/i.test(t)) ordered.push(t.toLowerCase());
+  }
+
+  for (const m of n.matchAll(/[0-9]+([\u0600-\u06FFa-z]{1,3})|([\u0600-\u06FFa-z]{1,3})[0-9]+/gi)) {
+    const block = (m[1] || m[2] || "").toLowerCase();
+    if (!block || seenBlocks.has(block)) continue;
+    seenBlocks.add(block);
+    // إن وُجدت حروف متباعدة مسبقًا بنفس المحتوى لا تُكرّر
+    if (ordered.join("") === block) continue;
+    if (ordered.length === 0) {
+      for (const ch of block) ordered.push(ch);
+    }
+  }
+
+  if (ordered.length === 0) {
+    return extractPlateLetters(n).join("");
+  }
+  return ordered.join("");
+}
+
 function plateLettersJoined(raw: string): string {
-  return extractPlateLetters(normalizeSearchText(raw)).join("");
+  return plateLettersOrdered(raw);
 }
 
 function uniqueOrNull(hits: CheckSheetRow[]): CheckSheetRow | null {
@@ -183,18 +210,21 @@ export function lookupPlate(
 export type VoicePlateLookup =
   | { status: "exact"; row: CheckSheetRow }
   | { status: "similar"; row: CheckSheetRow; query: string }
+  /** حروف التُقطت وعدة لوحات تطابق — انتظر الرقم لإكمال التشيك */
+  | { status: "need_digits"; query: string; count: number }
   | { status: "none"; query: string };
 
 /**
- * مطابقة صوتية دقيقة:
- * - لا تلتقط مقطعًا قصيرًا (مثل 10 قبل 20)
+ * مطابقة صوتية ذكية:
+ * - حرفًا حرفًا ثم الرقم (سهص + 5613)
+ * - عند تطابق حروف متعددة لا تفشل — تطلب الرقم
  * - عند غياب التطابق تُرجع أقرب رقم مشابه مع تنبيه
  */
 export function lookupPlateVoiceDetailed(
   index: Map<string, CheckSheetRow>,
   query: string
 ): VoicePlateLookup {
-  const norm = normalizePlate(query);
+  const norm = normalizePlate(normalizeSearchText(String(query ?? "")).replace(/\s/g, ""));
   const qSearch = normalizeSearchText(norm).replace(/\s/g, "");
   if (!qSearch) return { status: "none", query: String(query ?? "") };
 
@@ -204,10 +234,16 @@ export function lookupPlateVoiceDetailed(
     if (normalizePlate(row.plate) === norm) return { status: "exact", row };
   }
 
-  const qLetters = qSearch.replace(/[0-9]/g, "");
+  // تطابق بعد إزالة المسافات من اللوحة المخزّنة (س هـ ص 5613 ↔ سهص5613)
+  for (const [, row] of index) {
+    const p = normalizePlate(normalizeSearchText(row.plate).replace(/\s/g, ""));
+    if (p && p === qSearch) return { status: "exact", row };
+  }
+
+  const qLettersClean = qSearch.replace(/[0-9]/g, "");
   const digitsOnly = qSearch.replace(/[^0-9]/g, "");
 
-  if (digitsOnly.length > 0 && qLetters.length === 0) {
+  if (digitsOnly.length > 0 && qLettersClean.length === 0) {
     const exactDigitHits: CheckSheetRow[] = [];
     for (const [, row] of index) {
       const d = plateDigits(row.plate);
@@ -225,6 +261,9 @@ export function lookupPlateVoiceDetailed(
       }
       const one = uniqueOrNull(containHits);
       if (one) return { status: "exact", row: one };
+      if (containHits.length > 1) {
+        return { status: "need_digits", query: digitsOnly, count: containHits.length };
+      }
     }
 
     const similar = findSimilarDigitPlate(index, digitsOnly);
@@ -232,34 +271,68 @@ export function lookupPlateVoiceDetailed(
     return { status: "none", query: digitsOnly };
   }
 
-  if (qLetters.length > 0 && digitsOnly.length === 0) {
+  if (qLettersClean.length > 0 && digitsOnly.length === 0) {
     const exactLetterHits: CheckSheetRow[] = [];
     const containHits: CheckSheetRow[] = [];
     for (const [, row] of index) {
-      const letters = plateLettersJoined(row.plate);
+      const letters = plateLettersOrdered(row.plate);
       if (!letters) continue;
-      if (letters === qLetters) exactLetterHits.push(row);
-      else if (letters.includes(qLetters)) containHits.push(row);
-    }
-    if (exactLetterHits.length === 1) return { status: "exact", row: exactLetterHits[0] };
-    const one = uniqueOrNull(containHits);
-    if (one) return { status: "exact", row: one };
-    return { status: "none", query: qLetters };
-  }
-
-  if (qLetters.length > 0 && digitsOnly.length > 0) {
-    const hits: CheckSheetRow[] = [];
-    for (const [, row] of index) {
-      const p = normalizeSearchText(row.plate).replace(/\s/g, "");
-      const d = plateDigits(row.plate);
-      const letters = plateLettersJoined(row.plate);
-      if (p.includes(qSearch) || (d === digitsOnly && letters === qLetters)) {
-        hits.push(row);
+      if (letters === qLettersClean) exactLetterHits.push(row);
+      else if (letters.includes(qLettersClean) || qLettersClean.includes(letters)) {
+        containHits.push(row);
       }
     }
-    const one = uniqueOrNull(hits);
-    if (one) return { status: "exact", row: one };
+    if (exactLetterHits.length === 1) return { status: "exact", row: exactLetterHits[0] };
+    if (exactLetterHits.length > 1) {
+      return { status: "need_digits", query: qLettersClean, count: exactLetterHits.length };
+    }
+    if (containHits.length === 1) return { status: "exact", row: containHits[0] };
+    if (containHits.length > 1) {
+      return { status: "need_digits", query: qLettersClean, count: containHits.length };
+    }
+    return { status: "none", query: qLettersClean };
+  }
+
+  if (qLettersClean.length > 0 && digitsOnly.length > 0) {
+    const hits: CheckSheetRow[] = [];
+    const softHits: CheckSheetRow[] = [];
+    for (const [, row] of index) {
+      const p = normalizePlate(normalizeSearchText(row.plate).replace(/\s/g, ""));
+      const d = plateDigits(row.plate);
+      const letters = plateLettersOrdered(row.plate);
+      if (p === qSearch || (d === digitsOnly && letters === qLettersClean)) {
+        hits.push(row);
+      } else if (
+        (d === digitsOnly && letters.includes(qLettersClean)) ||
+        (letters === qLettersClean && d.includes(digitsOnly)) ||
+        p.includes(qSearch)
+      ) {
+        softHits.push(row);
+      }
+    }
+    if (hits.length === 1) return { status: "exact", row: hits[0] };
+    if (hits.length > 1) {
+      // نفس الحروف والرقم — خذ الأولى المستقرة
+      return { status: "exact", row: hits[0] };
+    }
+    const softOne = uniqueOrNull(softHits);
+    if (softOne) return { status: "exact", row: softOne };
+    if (softHits.length > 1 && digitsOnly.length >= 3) {
+      return { status: "exact", row: softHits[0] };
+    }
     if (digitsOnly.length >= 3) {
+      // صفِّ حسب الحروف إن وُجدت
+      const letterFiltered: CheckSheetRow[] = [];
+      for (const [, row] of index) {
+        const d = plateDigits(row.plate);
+        const letters = plateLettersOrdered(row.plate);
+        if (d === digitsOnly && (!qLettersClean || letters.includes(qLettersClean) || qLettersClean.includes(letters))) {
+          letterFiltered.push(row);
+        }
+      }
+      if (letterFiltered.length === 1) return { status: "exact", row: letterFiltered[0] };
+      if (letterFiltered.length > 1) return { status: "exact", row: letterFiltered[0] };
+
       const similar = findSimilarDigitPlate(index, digitsOnly);
       if (similar) return { status: "similar", row: similar, query: qSearch };
     }
