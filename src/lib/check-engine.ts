@@ -216,8 +216,7 @@ export type VoicePlateLookup =
 
 /**
  * مطابقة صوتية ذكية:
- * - حرفًا حرفًا ثم الرقم (سهص + 5613)
- * - عند تطابق حروف متعددة لا تفشل — تطلب الرقم
+ * - حرفًا حرفًا (سهص) أو مع الرقم (سهص5613) → نتيجة فورية
  * - عند غياب التطابق تُرجع أقرب رقم مشابه مع تنبيه
  */
 export function lookupPlateVoiceDetailed(
@@ -261,9 +260,7 @@ export function lookupPlateVoiceDetailed(
       }
       const one = uniqueOrNull(containHits);
       if (one) return { status: "exact", row: one };
-      if (containHits.length > 1) {
-        return { status: "need_digits", query: digitsOnly, count: containHits.length };
-      }
+      if (containHits.length > 1) return { status: "exact", row: containHits[0] };
     }
 
     const similar = findSimilarDigitPlate(index, digitsOnly);
@@ -272,6 +269,10 @@ export function lookupPlateVoiceDetailed(
   }
 
   if (qLettersClean.length > 0 && digitsOnly.length === 0) {
+    // حرف واحد فقط ضعيف جدًا مع آلاف اللوحات — لا نتيجة بعد
+    if (qLettersClean.length < 2) {
+      return { status: "none", query: qLettersClean };
+    }
     const exactLetterHits: CheckSheetRow[] = [];
     const containHits: CheckSheetRow[] = [];
     for (const [, row] of index) {
@@ -282,14 +283,9 @@ export function lookupPlateVoiceDetailed(
         containHits.push(row);
       }
     }
-    if (exactLetterHits.length === 1) return { status: "exact", row: exactLetterHits[0] };
-    if (exactLetterHits.length > 1) {
-      return { status: "need_digits", query: qLettersClean, count: exactLetterHits.length };
-    }
-    if (containHits.length === 1) return { status: "exact", row: containHits[0] };
-    if (containHits.length > 1) {
-      return { status: "need_digits", query: qLettersClean, count: containHits.length };
-    }
+    // أظهر نتيجة مباشرة (أول مطابقة) — لا تُبقِ الميكروفون مفتوحًا بانتظار الرقم
+    if (exactLetterHits.length >= 1) return { status: "exact", row: exactLetterHits[0] };
+    if (containHits.length >= 1) return { status: "exact", row: containHits[0] };
     return { status: "none", query: qLettersClean };
   }
 

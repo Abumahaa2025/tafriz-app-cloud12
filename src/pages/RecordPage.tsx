@@ -218,16 +218,7 @@ export default function RecordPage({
       stopListening();
       return;
     }
-    if (result.status === "need_digits") {
-      showNotice(
-        result.count > 1
-          ? `تم «${result.query}» — ${result.count} لوحة، أكمل بنطق الرقم`
-          : `تم «${result.query}» — أكمل بنطق رقم اللوحة`,
-        4500
-      );
-      return;
-    }
-    showNotice("لم تُوجد مطابقة — انطق الحروف ثم الرقم");
+    showNotice("لم تُوجد مطابقة — أعد المحاولة بوضوح");
   }
 
   function handleTranscript(transcript: string, alternatives: string[]) {

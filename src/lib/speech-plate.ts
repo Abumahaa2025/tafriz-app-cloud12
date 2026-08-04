@@ -345,15 +345,26 @@ export function speechToPlateCandidates(raw: string): string[] {
   return rankPlateCandidates([...out]);
 }
 
-const VOICE_COMMIT_MS = 1600;
-/** عند حروف فقط ننتظر أطول قليلًا لإتاحة نطق الرقم */
-const VOICE_COMMIT_LETTERS_MS = 2800;
+const VOICE_COMMIT_MS = 1200;
+/** انتظار قصير بعد آخر مقطع قبل اعتماد الأمر (حرفًا حرفًا) */
+const VOICE_COMMIT_ASSEMBLE_MS = 1500;
+const DEFAULT_SESSION_MAX_MS = 16000;
+
+function isVoiceCommitReady(token: string): boolean {
+  if (!token) return false;
+  const digits = (token.match(/\d/g) || []).length;
+  const letters = (token.match(/[\u0600-\u06FFa-zA-Z]/g) || []).length;
+  // رقم كافٍ وحده، أو حرفان فأكثر، أو حرف + رقم
+  if (digits >= 3) return true;
+  if (letters >= 2) return true;
+  if (digits >= 1 && letters >= 1) return true;
+  return false;
+}
 
 function commitDelayForToken(token: string): number {
   if (!token) return VOICE_COMMIT_MS;
   const hasDigit = /\d/.test(token);
-  const lettersOnly = !hasDigit && /[\u0600-\u06FFa-zA-Z]/.test(token);
-  return lettersOnly ? VOICE_COMMIT_LETTERS_MS : VOICE_COMMIT_MS;
+  return hasDigit ? VOICE_COMMIT_MS : VOICE_COMMIT_ASSEMBLE_MS;
 }
 
 /** يجمّع المقاطع بالترتيب: س ثم ه ثم ص ثم 5613 → سهص5613 */
@@ -418,23 +429,56 @@ export function startPlateSpeech(opts: {
   onInterim?: (transcript: string) => void;
   onError?: (message: string) => void;
   onEnd?: () => void;
+  /**
+   * أمر واحد: يستمع حتى نتيجة/انتهاء الجلسة ثم يتوقف (لا يبقى مفتوحًا).
+   * continuous: يستمر بإعادة التشغيل حتى يُستدعى stop().
+   */
+  mode?: "command" | "continuous";
+  /** أقصى مدة للاستماع في وضع الأمر الواحد */
+  maxSessionMs?: number;
 }): { stop: () => void } | null {
   const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Ctor) {
     opts.onError?.("المتصفح لا يدعم التعرف الصوتي");
     return null;
   }
+  const commandMode = (opts.mode ?? "command") === "command";
   const rec = new Ctor();
   rec.lang = "ar-SA";
+  // أثناء الجلسة نجمع حرفًا حرفًا؛ الإيقاف يتم بعد اعتماد الأمر
   rec.continuous = true;
   rec.interimResults = true;
   rec.maxAlternatives = 5;
   let stopped = false;
+  let finished = false;
   let restartTimer: ReturnType<typeof setTimeout> | null = null;
   let commitTimer: ReturnType<typeof setTimeout> | null = null;
+  let sessionTimer: ReturnType<typeof setTimeout> | null = null;
   const plateBuf = createSpeechPlateBuffer();
 
+  const finishSession = () => {
+    if (finished) return;
+    finished = true;
+    stopped = true;
+    plateBuf.reset();
+    if (commitTimer) clearTimeout(commitTimer);
+    if (restartTimer) clearTimeout(restartTimer);
+    if (sessionTimer) clearTimeout(sessionTimer);
+    try {
+      rec.onend = null;
+      rec.stop();
+    } catch {
+      try {
+        rec.abort();
+      } catch {
+        // ignore
+      }
+    }
+    opts.onEnd?.();
+  };
+
   rec.onresult = (ev) => {
+    if (stopped) return;
     let interim = "";
     for (let i = ev.resultIndex; i < ev.results.length; i++) {
       const result = ev.results[i];
@@ -446,15 +490,14 @@ export function startPlateSpeech(opts: {
           if (t) transcripts.push(t);
         }
         if (transcripts.length === 0) continue;
-        // كل البدائل — أحيانًا الأولى كلمة خاطئة والثانية الحرف الصحيح
         const ranked = plateBuf.ingest(transcripts);
-        const display = plateBuf.value
-          ? plateBuf.chunks.join(" ")
-          : transcripts[0];
+        const display = plateBuf.value ? plateBuf.chunks.join(" ") : transcripts[0];
         if (display) opts.onInterim?.(display);
         if (commitTimer) clearTimeout(commitTimer);
         const heard = transcripts[0];
         const tokenNow = plateBuf.value;
+        // لا تعتمد الأمر قبل اكتمال مقاطع كافية (يمنع إغلاق الجلسة بعد حرف واحد)
+        if (!isVoiceCommitReady(tokenNow)) continue;
         commitTimer = setTimeout(() => {
           if (stopped) return;
           const finalCandidates = plateBuf.value
@@ -462,6 +505,7 @@ export function startPlateSpeech(opts: {
             : ranked;
           const unique = [...new Set(finalCandidates.filter(Boolean))];
           opts.onFinal(heard, unique);
+          if (commandMode) finishSession();
         }, commitDelayForToken(tokenNow));
       } else {
         interim += result[0]?.transcript ?? "";
@@ -476,6 +520,7 @@ export function startPlateSpeech(opts: {
     }
     if (ev.error === "network") {
       opts.onError?.("التعرف الصوتي يحتاج اتصال إنترنت — أعد المحاولة");
+      if (commandMode) finishSession();
       return;
     }
     opts.onError?.(
@@ -483,22 +528,24 @@ export function startPlateSpeech(opts: {
         ? "يرجى السماح باستخدام الميكروفون"
         : `خطأ في التعرف الصوتي: ${ev.error}`
     );
+    if (commandMode) finishSession();
   };
 
   rec.onend = () => {
-    if (stopped) {
-      opts.onEnd?.();
+    if (stopped || finished) {
+      if (!finished) opts.onEnd?.();
       return;
     }
+    // أعد التشغيل فقط أثناء جلسة الأمر لجمع بقية الحروف
     if (restartTimer) clearTimeout(restartTimer);
     restartTimer = setTimeout(() => {
-      if (stopped) return;
+      if (stopped || finished) return;
       try {
         rec.start();
       } catch {
-        opts.onEnd?.();
+        finishSession();
       }
-    }, 250);
+    }, 200);
   };
 
   try {
@@ -508,22 +555,21 @@ export function startPlateSpeech(opts: {
     return null;
   }
 
+  if (commandMode) {
+    sessionTimer = setTimeout(() => {
+      if (stopped || finished) return;
+      // إن وُجد مخزن جاهز اعتمده قبل الإغلاق
+      if (isVoiceCommitReady(plateBuf.value)) {
+        const unique = [normalizePlate(plateBuf.value) || plateBuf.value];
+        opts.onFinal(plateBuf.value, unique);
+      }
+      finishSession();
+    }, opts.maxSessionMs ?? DEFAULT_SESSION_MAX_MS);
+  }
+
   return {
     stop: () => {
-      stopped = true;
-      plateBuf.reset();
-      if (commitTimer) clearTimeout(commitTimer);
-      if (restartTimer) clearTimeout(restartTimer);
-      try {
-        rec.onend = null;
-        rec.stop();
-      } catch {
-        try {
-          rec.abort();
-        } catch {
-          // ignore
-        }
-      }
+      finishSession();
     },
   };
 }

@@ -157,7 +157,7 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
     idbRemove(CHECK_IDB_KEY).catch(() => {});
   }
 
-  function tryLookup(raw: string, voice = false): "exact" | "similar" | "need_digits" | false {
+  function tryLookup(raw: string, voice = false): "exact" | "similar" | false {
     if (!voice) {
       const hit = lookupPlate(index, raw);
       if (!hit) return false;
@@ -169,16 +169,7 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
       return "exact";
     }
     const result = lookupPlateVoiceDetailed(index, raw);
-    if (result.status === "none") return false;
-    if (result.status === "need_digits") {
-      const tip =
-        result.count > 1
-          ? `تم التقاط «${result.query}» — وُجدت ${result.count} لوحة، أكمل بنطق الرقم`
-          : `تم التقاط «${result.query}» — أكمل بنطق رقم اللوحة`;
-      setSpeechError(tip);
-      setInterim(result.query);
-      return "need_digits";
-    }
+    if (result.status === "none" || result.status === "need_digits") return false;
     setFound(result.row);
     setDetailOpen(true);
     setHitsLog((prev) =>
@@ -203,48 +194,53 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
     setDetailOpen(false);
   }
 
+  function returnToReady() {
+    speechRef.current?.stop();
+    speechRef.current = null;
+    setChecking(false);
+    setInterim("");
+  }
+
   function startChecking() {
     setSpeechError(null);
     setFound(null);
     setDetailOpen(false);
+    setInterim("");
     if (!checkData?.rows.length) {
       setSpeechError("ارفع ملف التشيك أولًا");
       return;
     }
     if (!isSpeechRecognitionSupported()) {
       setSpeechError("التعرف الصوتي غير مدعوم هنا — استخدم الإدخال اليدوي بالأسفل");
-      setChecking(true);
       return;
     }
     const handle = startPlateSpeech({
+      mode: "command",
       onFinal: (transcript, candidates) => {
-        let sawNeedDigits = false;
         for (const c of candidates) {
           if (!c) continue;
           const outcome = tryLookup(c, true);
           if (outcome === "exact" || outcome === "similar") {
             setInterim("");
-            speechRef.current?.stop();
-            speechRef.current = null;
-            setChecking(false);
             return;
           }
-          if (outcome === "need_digits") {
-            sawNeedDigits = true;
-            // استمر في الاستماع لإكمال الرقم
-            continue;
-          }
         }
-        if (sawNeedDigits) return;
         if (candidates.some((c) => c && c.length >= 2) || transcript.trim().length >= 2) {
-          const tip = "لم تُوجد مطابقة بعد — انطق الحروف ثم الرقم (مثال: س هـ ص ثم 5613)";
+          const tip = "لم تُوجد مطابقة — أعد الضغط وانطق الحروف أو الرقم بوضوح";
           setSpeechError(tip);
-          window.setTimeout(() => setSpeechError((prev) => (prev === tip ? null : prev)), 4200);
+          window.setTimeout(() => setSpeechError((prev) => (prev === tip ? null : prev)), 3500);
         }
       },
       onInterim: setInterim,
-      onError: setSpeechError,
-      onEnd: () => setChecking(false),
+      onError: (msg) => {
+        setSpeechError(msg);
+        returnToReady();
+      },
+      onEnd: () => {
+        speechRef.current = null;
+        setChecking(false);
+        setInterim("");
+      },
     });
     if (!handle) return;
     speechRef.current = handle;
@@ -252,10 +248,7 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
   }
 
   function stopChecking() {
-    speechRef.current?.stop();
-    speechRef.current = null;
-    setChecking(false);
-    setInterim("");
+    returnToReady();
   }
 
   function exportHits() {
