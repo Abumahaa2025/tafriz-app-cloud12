@@ -2,7 +2,7 @@ import * as React from "react";
 import { Download, Upload, MessageCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { nativeShareText } from "@/lib/native-share";
-import { SPREADSHEET_ACCEPT, pickSpreadsheetFile } from "@/lib/pick-spreadsheet";
+import { pickSpreadsheetFile, spreadsheetAcceptForDevice } from "@/lib/pick-spreadsheet";
 
 interface ImportExportBarProps {
   /** Called with the picked file so the parent can route it into its own upload logic. */
@@ -95,7 +95,7 @@ export function ImportExportBar({
         <input
           ref={inputRef}
           type="file"
-          accept={SPREADSHEET_ACCEPT}
+          accept={spreadsheetAcceptForDevice()}
           className="hidden"
           onChange={(e) => {
             const f = e.target.files?.[0];

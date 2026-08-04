@@ -20,7 +20,7 @@ import { idbGet, idbRemove, idbSet } from "@/lib/idb";
 import { consumeSharedFile } from "@/lib/shared-file";
 import { listenForNativeSharedFile } from "@/lib/native-import";
 import { backend } from "@/lib/backend";
-import { SPREADSHEET_ACCEPT } from "@/lib/pick-spreadsheet";
+import { spreadsheetAcceptForDevice } from "@/lib/pick-spreadsheet";
 import { useAuth } from "@/context/AuthContext";
 import {
   loadSortLibrary,
@@ -655,7 +655,7 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
           <input
             ref={appendInputRef}
             type="file"
-            accept={SPREADSHEET_ACCEPT}
+            accept={spreadsheetAcceptForDevice()}
             className="hidden"
             onChange={(e) => {
               const f = e.target.files?.[0];
