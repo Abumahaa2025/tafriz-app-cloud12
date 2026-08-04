@@ -33,7 +33,8 @@ export function RefreshAppButton({ className }: { className?: string }) {
       onClick={() => void handleRefresh()}
       disabled={busy}
       className={cn(
-        "fixed top-3 left-3 z-50 flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background/90 text-foreground shadow-sm backdrop-blur transition hover:bg-secondary disabled:opacity-70",
+        // مباشرة تحت زر الثيم (top-3 right-3، ارتفاع 10 = 2.5rem)
+        "fixed top-[3.35rem] right-3 z-50 flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background/90 text-foreground shadow-sm backdrop-blur transition hover:bg-secondary disabled:opacity-70",
         className
       )}
       aria-label="تحديث الصفحة"
