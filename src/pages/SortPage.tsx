@@ -847,9 +847,10 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
         </CardHeader>
         <CardContent className="flex flex-col gap-3" style={{ fontSize: `${Math.max(50, zoom)}%` }}>
           <div className="flex gap-2">
-            <StatPill label="غير مفرزة" value={result?.unsortedCount ?? 0} tone="rose" />
-            <StatPill label="فرز من الإحالة" value={result?.distinctMatchedPlates ?? 0} tone="red" />
+            {/* ترتيب RTL: لوحات مفرزة يمينًا كما في المرجع */}
             <StatPill label="لوحات مفرزة" value={result?.matchedRows.length ?? 0} tone="green" />
+            <StatPill label="فرز من الإحالة" value={result?.distinctMatchedPlates ?? 0} tone="red" />
+            <StatPill label="غير مفرزة" value={result?.unsortedCount ?? 0} tone="muted" />
           </div>
 
           <p className="text-sm font-bold">داتا برنامج {dataFile ? dataFile.name : "xlsx.5"}</p>
