@@ -4,7 +4,10 @@
   "framework": "vite",
   "installCommand": "npm install",
   "rewrites": [
-    { "source": "/((?!\\.well-known/|downloads/).*)", "destination": "/index.html" }
+    {
+      "source": "/((?!\\.well-known/|downloads/|install\\.html|.*\\.apk$).*)",
+      "destination": "/index.html"
+    }
   ],
   "headers": [
     {
@@ -15,16 +18,17 @@
       ]
     },
     {
-      "source": "/downloads/(.*).apk",
+      "source": "/downloads/:file*",
       "headers": [
         { "key": "Content-Type", "value": "application/vnd.android.package-archive" },
         { "key": "Content-Disposition", "value": "attachment; filename=\"Tafriz.apk\"" },
-        { "key": "Cache-Control", "value": "no-cache" }
+        { "key": "Cache-Control", "value": "public, max-age=300" }
       ]
     },
     {
       "source": "/install.html",
       "headers": [
+        { "key": "Content-Type", "value": "text/html; charset=utf-8" },
         { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
       ]
     },
