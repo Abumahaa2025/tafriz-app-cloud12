@@ -16,6 +16,7 @@ import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { backend } from "@/lib/backend";
 import { FeedbackNotifyWatcher } from "@/components/FeedbackNotifyWatcher";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { RefreshAppButton } from "@/components/RefreshAppButton";
 
 type OverlayPage = MenuTarget | "ai-scan" | null;
 
@@ -110,6 +111,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
+        <RefreshAppButton />
         <ThemeToggle />
         <Gate />
       </AuthProvider>
