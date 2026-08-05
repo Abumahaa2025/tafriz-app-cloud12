@@ -4,6 +4,18 @@ import "leaflet/dist/leaflet.css";
 import "leaflet.markercluster";
 import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
+import markerIconUrl from "leaflet/dist/images/marker-icon.png";
+import markerIcon2xUrl from "leaflet/dist/images/marker-icon-2x.png";
+import markerShadowUrl from "leaflet/dist/images/marker-shadow.png";
+
+// Leaflet يستنبط مسار صور الدبابيس من خاصية background-image في ملف تنسيقه، لكن
+// Vite يحوّل تلك الصورة إلى data URI فيخرج المسار المستنبط خاطئًا وتظهر الدبابيس
+// المفردة كصور مكسورة. نمرّر الروابط التي أنتجها Vite صراحةً بدل الاستنباط.
+L.Icon.Default.mergeOptions({
+  iconUrl: markerIconUrl,
+  iconRetinaUrl: markerIcon2xUrl,
+  shadowUrl: markerShadowUrl,
+});
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyL = typeof L & { markerClusterGroup: (options?: Record<string, unknown>) => any };
