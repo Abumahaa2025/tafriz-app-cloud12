@@ -96,11 +96,33 @@ npm run verify:db -- <url> <anon-key>
 - الدوال الخادمية تُفحص بـ `npm run typecheck:api`. قبل ذلك كان `tsconfig.json`
   يغطّي `src/` فقط، فكان مجلد `api/` — وفيه المفتاح السري — بلا أي فحص أنواع.
 
+## قيد إلزامي على استيراد الملفات داخل api/
+
+`package.json` فيه `"type": "module"`، فالملفات التي تنتجها Vercel من `api/`
+تعمل كـ **ESM** على Node. وESM يوجب **امتداد `.js` صريحًا** في أي استيراد نسبي:
+
+```ts
+import { fail } from "../lib/api/errors.js";   // ✅
+import { fail } from "../lib/api/errors";      // ❌ ERR_MODULE_NOT_FOUND وقت التشغيل
+```
+
+الاستيراد بدون امتداد يمر في الفحص العادي ويُبنى بنجاح، ثم تسقط الدالة في
+الإنتاج بـ `FUNCTION_INVOCATION_FAILED`. لهذا `tsconfig.api.json` مضبوط على
+`moduleResolution: "nodenext"` — وحده يرفض الاستيراد الناقص وقت الفحص. **لا
+تبدّله بـ `bundler`**، لأن `bundler` يسمح بالاستيراد بدون امتداد فيرجع الخطأ
+مختبئًا حتى النشر.
+
+هذا القيد لا ينطبق على `src/`: حزمة الواجهة يبنيها Vite ويحلّ الامتدادات بنفسه.
+
 ## قبل كل نشر
 
 ```bash
-npm run typecheck:api   # الدوال الخادمية
+npm run typecheck:api   # الدوال الخادمية (يمسك أخطاء الاستيراد أعلاه)
 npm run build           # الواجهة
 npm run verify:db -- <url> <anon-key>
 npm run verify:apk
 ```
+
+للتحقق الكامل من أن الدوال تُحمَّل فعلًا كما ستُحمَّل على Vercel (وليس فقط أنها
+تُفحص بنجاح)، ابنِ نقاط الدخول بـ `@vercel/node` ثم استورد الناتج وشغّله على
+Node — الفحص وحده لا يكشف `ERR_MODULE_NOT_FOUND`.

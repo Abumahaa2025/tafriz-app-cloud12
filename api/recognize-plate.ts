@@ -4,8 +4,8 @@
 // ANTHROPIC_API_KEY في إعدادات الاستضافة — لا تكتب المفتاح داخل الكود مباشرة.
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { fail, failInternal, failUpstream } from "../lib/api/errors";
-import { readAnthropicKey } from "../lib/api/env";
+import { fail, failInternal, failUpstream } from "../lib/api/errors.js";
+import { readAnthropicKey } from "../lib/api/env.js";
 
 export const config = {
   api: { bodyParser: false },

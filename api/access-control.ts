@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
-import { fail, failInternal, failWithCause } from "../lib/api/errors";
-import { isMissingConfig, readAnonKey, readOwnerIdentifier, readSupabaseSecrets } from "../lib/api/env";
+import { fail, failInternal, failWithCause } from "../lib/api/errors.js";
+import { isMissingConfig, readAnonKey, readOwnerIdentifier, readSupabaseSecrets } from "../lib/api/env.js";
 
 /**
  * رسالة موحّدة لأي فشل مصدره قاعدة البيانات. نص Postgres الأصلي يروح للسجل

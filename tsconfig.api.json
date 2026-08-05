@@ -1,10 +1,11 @@
 {
   "//": "tsconfig.json يغطّي src/ فقط، فالدوال الخادمية في api/ ما كانت تُفحص إطلاقًا قبل النشر. هذا الملف يفحصها بإعدادات Node.",
+  "//module": "nodenext إلزامي هنا ولا يجوز تبديله بـ bundler: package.json فيه \"type\": \"module\"، فالملفات الناتجة تعمل كـ ESM على Node، وESM يوجب امتداد .js صريحًا في أي استيراد نسبي. nodenext وحده يفرض هذا وقت الفحص بدل أن ينكشف كانهيار في الإنتاج.",
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2022"],
-    "module": "ESNext",
-    "moduleResolution": "bundler",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
     "types": ["node"],
     "skipLibCheck": true,
     "resolveJsonModule": true,
