@@ -31,6 +31,18 @@ export function ClusterMap({ points, focus, className, onSelect }: Props) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const clusterRef = React.useRef<any>(null);
 
+  /**
+   * onSelect تُمرَّر عادةً كدالة سهمية مكتوبة داخل JSX، أي مرجع جديد عند كل
+   * إعادة رسم. لو بقيت في مصفوفة اعتماديات تأثير الدبابيس أدناه، كان كل حرف
+   * يكتبه المستخدم في البحث يهدم كل الدبابيس ويعيد بناءها — وهذا سبب تعليق
+   * التطبيق عند دخول صفحة الخريطة. نحفظها في مرجع فتُقرأ آخر نسخة عند النقر
+   * بدون أن تكون سببًا لإعادة البناء.
+   */
+  const onSelectRef = React.useRef(onSelect);
+  React.useEffect(() => {
+    onSelectRef.current = onSelect;
+  }, [onSelect]);
+
   React.useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     const LC = L as AnyL;
@@ -69,6 +81,7 @@ export function ClusterMap({ points, focus, className, onSelect }: Props) {
 
     cluster.clearLayers();
     const latLngs: [number, number][] = [];
+    const markers: L.Marker[] = [];
 
     for (const p of points) {
       const marker = LC.marker([p.lat, p.lng], { title: p.label });
@@ -77,10 +90,14 @@ export function ClusterMap({ points, focus, className, onSelect }: Props) {
           p.label
         )}</b><br/>${escapeHtml(p.sub ?? "")}</div>`
       );
-      marker.on("click", () => onSelect?.(p.id));
-      cluster.addLayer(marker);
+      marker.on("click", () => onSelectRef.current?.(p.id));
+      markers.push(marker);
       latLngs.push([p.lat, p.lng]);
     }
+
+    // إضافة كل الدبابيس دفعة واحدة: addLayer المفردة تعيد حساب شجرة التجميع
+    // في كل نداء، وهي أبطأ بمراتب من addLayers مع آلاف النقاط
+    cluster.addLayers(markers);
 
     if (focus) {
       map.setView([focus.lat, focus.lng], Math.max(map.getZoom(), 14));
@@ -89,7 +106,7 @@ export function ClusterMap({ points, focus, className, onSelect }: Props) {
     } else if (latLngs.length > 1) {
       map.fitBounds(LC.latLngBounds(latLngs), { padding: [28, 28] });
     }
-  }, [points, focus, onSelect]);
+  }, [points, focus]);
 
   return <div ref={containerRef} className={className ?? "h-72 w-full rounded-xl"} />;
 }
