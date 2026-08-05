@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
-import { fail, failWithCause } from "../lib/api/errors";
-import { isMissingConfig, readOwnerIdentifier, readSupabaseSecrets } from "../lib/api/env";
+import { fail, failWithCause } from "../lib/api/errors.js";
+import { isMissingConfig, readOwnerIdentifier, readSupabaseSecrets } from "../lib/api/env.js";
 
 /**
  * إنشاء حساب مؤكَّد مباشرة عبر service role حتى لا يعتمد التسجيل
