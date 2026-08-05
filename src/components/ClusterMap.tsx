@@ -4,6 +4,18 @@ import "leaflet/dist/leaflet.css";
 import "leaflet.markercluster";
 import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
+import markerIconUrl from "leaflet/dist/images/marker-icon.png";
+import markerIcon2xUrl from "leaflet/dist/images/marker-icon-2x.png";
+import markerShadowUrl from "leaflet/dist/images/marker-shadow.png";
+
+// Leaflet يستنبط مسار صور الدبابيس من خاصية background-image في ملف تنسيقه، لكن
+// Vite يحوّل تلك الصورة إلى data URI فيخرج المسار المستنبط خاطئًا وتظهر الدبابيس
+// المفردة كصور مكسورة. نمرّر الروابط التي أنتجها Vite صراحةً بدل الاستنباط.
+L.Icon.Default.mergeOptions({
+  iconUrl: markerIconUrl,
+  iconRetinaUrl: markerIcon2xUrl,
+  shadowUrl: markerShadowUrl,
+});
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyL = typeof L & { markerClusterGroup: (options?: Record<string, unknown>) => any };
@@ -43,6 +55,9 @@ export function ClusterMap({ points, focus, className, onSelect }: Props) {
     onSelectRef.current = onSelect;
   }, [onSelect]);
 
+  /** إحداثيات ما هو معروض حاليًا، لإعادة التأطير عند إلغاء الاختيار بدون إعادة بناء */
+  const boundsRef = React.useRef<[number, number][] | null>(null);
+
   React.useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     const LC = L as AnyL;
@@ -61,6 +76,10 @@ export function ClusterMap({ points, focus, className, onSelect }: Props) {
       showCoverageOnHover: false,
       maxClusterRadius: 55,
       spiderfyOnMaxZoom: true,
+      // مع آلاف الدبابيس تبني addLayers الشجرة في نداء واحد يحجب الخيط الرئيسي
+      // ثوانٍ على الجوال. chunkedLoading يقسّمها دفعات ويترك المتصفح يتنفّس
+      // بينها، فتظهر الخريطة فورًا وتبقى الواجهة مستجيبة أثناء الامتلاء.
+      chunkedLoading: true,
     });
     cluster.addTo(map);
     mapRef.current = map;
@@ -73,6 +92,11 @@ export function ClusterMap({ points, focus, className, onSelect }: Props) {
     };
   }, []);
 
+  /**
+   * بناء الدبابيس يعتمد على points فقط. كان focus في نفس المصفوفة، فاختيار لوحة
+   * من القائمة أو من البحث — وكل ما يفعله أنه يحرّك الكاميرا — كان يهدم كل
+   * الدبابيس ويعيد بناءها من الصفر.
+   */
   React.useEffect(() => {
     const map = mapRef.current;
     const cluster = clusterRef.current;
@@ -85,10 +109,13 @@ export function ClusterMap({ points, focus, className, onSelect }: Props) {
 
     for (const p of points) {
       const marker = LC.marker([p.lat, p.lng], { title: p.label });
+      // نص النافذة يُبنى عند أول فتح فقط: بناؤه لكل نقطة مقدّمًا يعني آلاف عمليات
+      // تهريب HTML وتركيب نصوص على الخيط الرئيسي قبل ظهور الخريطة
       marker.bindPopup(
-        `<div style="text-align:right;font-family:Tajawal,sans-serif"><b>${escapeHtml(
-          p.label
-        )}</b><br/>${escapeHtml(p.sub ?? "")}</div>`
+        () =>
+          `<div style="text-align:right;font-family:Tajawal,sans-serif"><b>${escapeHtml(
+            p.label
+          )}</b><br/>${escapeHtml(p.sub ?? "")}</div>`
       );
       marker.on("click", () => onSelectRef.current?.(p.id));
       markers.push(marker);
@@ -99,14 +126,42 @@ export function ClusterMap({ points, focus, className, onSelect }: Props) {
     // في كل نداء، وهي أبطأ بمراتب من addLayers مع آلاف النقاط
     cluster.addLayers(markers);
 
+    boundsRef.current = latLngs.length > 0 ? latLngs : null;
+    // focus مقروءة هنا لكنها ليست في الاعتماديات عن قصد: التأطير التلقائي مطلوب
+    // فقط عند تغيّر النقاط، أما تغيّر focus وحده فيتولّاه التأثير الذي يليه.
+    if (!focus) {
+      if (latLngs.length === 1) {
+        map.setView(latLngs[0], 14);
+      } else if (latLngs.length > 1) {
+        map.fitBounds(LC.latLngBounds(latLngs), { padding: [28, 28] });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [points]);
+
+  const hadFocusRef = React.useRef(false);
+  React.useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const LC = L as AnyL;
+
     if (focus) {
+      hadFocusRef.current = true;
       map.setView([focus.lat, focus.lng], Math.max(map.getZoom(), 14));
-    } else if (latLngs.length === 1) {
+      return;
+    }
+    // رجوعٌ من نقطة مختارة إلى العرض العام: أعِد التأطير على ما هو معروض حاليًا.
+    // أول تشغيل بلا focus يتولّاه تأثير الدبابيس، فلا نكرّر التأطير هنا.
+    if (!hadFocusRef.current) return;
+    hadFocusRef.current = false;
+    const latLngs = boundsRef.current;
+    if (!latLngs) return;
+    if (latLngs.length === 1) {
       map.setView(latLngs[0], 14);
-    } else if (latLngs.length > 1) {
+    } else {
       map.fitBounds(LC.latLngBounds(latLngs), { padding: [28, 28] });
     }
-  }, [points, focus]);
+  }, [focus]);
 
   return <div ref={containerRef} className={className ?? "h-72 w-full rounded-xl"} />;
 }

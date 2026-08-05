@@ -11,6 +11,10 @@ interface LastSortState {
   result: SortResult | null;
 }
 
+// نفس حجم صفحة ResultsTable في شاشة الفرز. بدون هذا الحد كانت القائمة تبني عنصرًا
+// لكل لوحة مفروزة، أي آلاف عناصر DOM تُعاد مع كل حرف في مربع البحث.
+const LIST_PAGE_SIZE = 80;
+
 type FleetItem = {
   plate: string;
   street: string;
@@ -56,6 +60,12 @@ export default function MapsPage({ onBack }: { onBack?: () => void }) {
     );
   }, [liveFleet, query]);
 
+  const [visibleCount, setVisibleCount] = React.useState(LIST_PAGE_SIZE);
+  React.useEffect(() => {
+    setVisibleCount(LIST_PAGE_SIZE);
+  }, [filtered]);
+  const visibleRows = filtered.length > visibleCount ? filtered.slice(0, visibleCount) : filtered;
+
   const selected = filtered.find((r) => r.plate === selectedPlate) ?? filtered[0] ?? null;
 
   React.useEffect(() => {
@@ -84,9 +94,17 @@ export default function MapsPage({ onBack }: { onBack?: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const fleetPoints = liveFleet.filter(
-    (r): r is FleetItem & { lat: number; lng: number } =>
-      r.lat != null && r.lng != null && Number.isFinite(r.lat) && Number.isFinite(r.lng)
+  // لا بد أن تبقى هوية هذه المصفوفة ثابتة: clusterPoints يعتمد عليها، وهي بدورها
+  // تُمرَّر كـ points للخريطة. لو أُعيد حسابها في كل رسم لصارت مرجعًا جديدًا كل مرة،
+  // فيسقط useMemo أدناه وتُهدم كل الدبابيس وتُبنى من جديد عند أي رسم — ولو لسبب
+  // لا علاقة له بالخريطة كتحديث بيانات المستخدم كل دقيقة أو حرف في مربع البحث.
+  const fleetPoints = React.useMemo(
+    () =>
+      liveFleet.filter(
+        (r): r is FleetItem & { lat: number; lng: number } =>
+          r.lat != null && r.lng != null && Number.isFinite(r.lat) && Number.isFinite(r.lng)
+      ),
+    [liveFleet]
   );
 
   const clusterPoints = React.useMemo(() => {
@@ -118,7 +136,10 @@ export default function MapsPage({ onBack }: { onBack?: () => void }) {
     return null;
   }, [mode, myCoords, selected]);
 
-  const withLocation = liveFleet.filter((r) => r.mapUrl || (r.lat != null && r.lng != null) || r.street).length;
+  const withLocation = React.useMemo(
+    () => liveFleet.filter((r) => r.mapUrl || (r.lat != null && r.lng != null) || r.street).length,
+    [liveFleet]
+  );
 
   return (
     <div className="mx-auto flex max-w-md flex-col gap-4 px-4 pb-28 pt-4">
@@ -246,7 +267,7 @@ export default function MapsPage({ onBack }: { onBack?: () => void }) {
                   : "لا نتائج مطابقة للبحث"}
               </p>
             )}
-            {filtered.map((row, i) => {
+            {visibleRows.map((row, i) => {
               const active = selected?.plate === row.plate;
               const hasPin = row.lat != null && row.lng != null;
               return (
@@ -293,6 +314,15 @@ export default function MapsPage({ onBack }: { onBack?: () => void }) {
                 </button>
               );
             })}
+            {filtered.length > visibleCount && (
+              <Button
+                variant="secondary"
+                className="w-full"
+                onClick={() => setVisibleCount((c) => c + LIST_PAGE_SIZE)}
+              >
+                عرض المزيد ({visibleCount} / {filtered.length})
+              </Button>
+            )}
           </div>
         </>
       )}
