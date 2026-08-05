@@ -1,5 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
+import { fail, failWithCause } from "../lib/api/errors";
+import { isMissingConfig, readOwnerIdentifier, readSupabaseSecrets } from "../lib/api/env";
 
 /**
  * إنشاء حساب مؤكَّد مباشرة عبر service role حتى لا يعتمد التسجيل
@@ -11,6 +13,29 @@ import { createClient } from "@supabase/supabase-js";
  */
 
 type IdentifierType = "email" | "phone";
+
+/**
+ * يترجم أخطاء Supabase Auth لرسالة عربية مكتوبة عندنا.
+ *
+ * ما نرجّع نص الخطأ الأصلي للمتصفح: صيغته تتغيّر بين إصدارات Supabase، ويكشف
+ * أننا نستعمل Supabase وكيف نبني البريد الداخلي من رقم الجوال.
+ */
+function authFailureMessage(cause: unknown): string {
+  const text = (cause instanceof Error ? cause.message : String(cause ?? "")).toLowerCase();
+  if (text.includes("already registered") || text.includes("already been registered")) {
+    return "هذا الحساب مسجّل مسبقًا. استخدم تسجيل الدخول بدل إنشاء حساب جديد.";
+  }
+  if (text.includes("rate limit") || text.includes("too many")) {
+    return "تم تجاوز الحد المسموح مؤقتًا. انتظر دقيقة ثم أعد المحاولة.";
+  }
+  if (text.includes("password")) {
+    return "كلمة المرور غير مقبولة. اختر كلمة أطول وأقوى.";
+  }
+  if (text.includes("invalid") && text.includes("email")) {
+    return "البريد أو رقم الجوال غير صالح. تأكد من كتابته بشكل صحيح.";
+  }
+  return "تعذّر إنشاء الحساب. أعد المحاولة، وإن تكرر تواصل مع الإدارة.";
+}
 
 function toAuthEmail(type: IdentifierType, identifier: string): string {
   if (type === "email") return identifier.trim().toLowerCase();
@@ -38,17 +63,20 @@ async function findUserIdByEmail(
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+    return fail(res, 405, "method_not_allowed", "الطريقة غير مسموحة.");
   }
 
-  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !serviceKey) {
-    return res.status(503).json({
-      error: "missing_service_role",
-      message: "SUPABASE_SERVICE_ROLE_KEY غير مضبوط في Vercel",
-    });
+  // 503 مقصود: العميل يفهمه كإشارة ليكمل بالمسار الاحتياطي في backend-supabase.ts
+  const secrets = readSupabaseSecrets();
+  if (isMissingConfig(secrets)) {
+    return fail(
+      res,
+      503,
+      "missing_service_role",
+      `إعدادات الخادم ناقصة (${secrets.missing.join(", ")}) — أضفها في Vercel.`
+    );
   }
+  const { url, serviceKey } = secrets;
 
   const { identifierType, identifier, password, profile } = req.body ?? {};
   if (
@@ -56,7 +84,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     !identifier ||
     typeof password !== "string"
   ) {
-    return res.status(400).json({ error: "invalid_payload" });
+    return fail(res, 400, "invalid_payload", "بيانات الطلب غير مكتملة أو غير صحيحة.");
   }
   // متوسط فأعلى: 8+ وتشمل حرفًا ورقمًا على الأقل
   {
@@ -67,11 +95,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const hasMixed = /[a-z]/.test(p) && /[A-Z]/.test(p);
     const classes = [hasLetter, hasDigit, hasSpecial || hasMixed].filter(Boolean).length;
     if (p.length < 8 || classes < 2) {
-      return res.status(400).json({
-        error: "weak_password",
-        message:
-          "كلمة المرور يجب أن تكون متوسطة على الأقل: 8 أحرف أو أكثر وتشمل حرفًا ورقمًا",
-      });
+      return fail(
+        res,
+        400,
+        "weak_password",
+        "كلمة المرور يجب أن تكون متوسطة على الأقل: 8 أحرف أو أكثر وتشمل حرفًا ورقمًا"
+      );
     }
   }
 
@@ -80,7 +109,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   });
 
   const authEmail = toAuthEmail(identifierType, identifier);
-  const ownerId = (process.env.OWNER_IDENTIFIER || "0575051487").trim();
+  const ownerId = readOwnerIdentifier();
   const isOwner = String(identifier) === ownerId;
 
   let userId = await findUserIdByEmail(url, serviceKey, authEmail);
@@ -91,7 +120,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       email_confirm: true,
     });
     if (error || !data.user) {
-      return res.status(400).json({ error: error?.message || "update_failed" });
+      return failWithCause(
+        res,
+        400,
+        "update_failed",
+        authFailureMessage(error),
+        "auth-register: updateUserById",
+        error
+      );
     }
     userId = data.user.id;
   } else {
@@ -105,14 +141,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // سباق نادر: أُنشئ الحساب بين البحث والإنشاء
       const again = await findUserIdByEmail(url, serviceKey, authEmail);
       if (!again) {
-        return res.status(400).json({ error: error?.message || "create_failed" });
+        return failWithCause(
+          res,
+          400,
+          "create_failed",
+          authFailureMessage(error),
+          "auth-register: createUser",
+          error
+        );
       }
       const upd = await admin.auth.admin.updateUserById(again, {
         password,
         email_confirm: true,
       });
       if (upd.error || !upd.data.user) {
-        return res.status(400).json({ error: upd.error?.message || "update_failed" });
+        return failWithCause(
+          res,
+          400,
+          "update_failed",
+          authFailureMessage(upd.error),
+          "auth-register: updateUserById after race",
+          upd.error
+        );
       }
       userId = upd.data.user.id;
     } else {
@@ -135,7 +185,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     { onConflict: "id" }
   );
   if (profileError) {
-    return res.status(400).json({ error: profileError.message });
+    return failWithCause(
+      res,
+      400,
+      "profile_upsert_failed",
+      "تم إنشاء الحساب لكن تعذّر حفظ بياناتك. سجّل الدخول وأعد المحاولة.",
+      "auth-register: profiles upsert",
+      profileError
+    );
   }
 
   return res.status(200).json({ ok: true, email: authEmail, userId });
