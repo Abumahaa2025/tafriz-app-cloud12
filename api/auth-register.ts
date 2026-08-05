@@ -112,78 +112,113 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const ownerId = readOwnerIdentifier();
   const isOwner = String(identifier) === ownerId;
 
-  let userId = await findUserIdByEmail(url, serviceKey, authEmail);
+  const newProfileRow = (id: string) => ({
+    id,
+    identifier_type: identifierType,
+    identifier,
+    status: isOwner ? "approved" : "pending",
+    is_owner: isOwner,
+    full_name: profile?.fullName || null,
+    city: profile?.city || null,
+    package_name: isOwner ? "مالك التطبيق" : null,
+    last_seen_at: new Date().toISOString(),
+  });
 
-  if (userId) {
-    const { data, error } = await admin.auth.admin.updateUserById(userId, {
-      password,
+  /**
+   * حساب موجود مسبقًا بنفس المعرّف.
+   *
+   * ⚠️ هذي النقطة مفتوحة بلا أي تحقق من هوية الطالب — أي أحد على الإنترنت
+   * يقدر يناديها. فتغيير كلمة مرور حساب قائم من هنا يعني أن من يعرف رقم
+   * جوال المستخدم يسرق حسابه، ورقم المالك مكتوب داخل حزمة الجافاسكربت
+   * العامة. لذلك: لا نلمس كلمة المرور، ولا نلمس بروفايلًا قائمًا.
+   *
+   * نكتفي برفع علامة تأكيد البريد حتى لا يبقى حساب قديم غير مؤكَّد عاجزًا
+   * عن الدخول، ثم يكمل العميل بتسجيل دخول عادي: كلمة المرور الصحيحة تدخل،
+   * والخاطئة تُرفض من Supabase Auth نفسه.
+   */
+  async function resumeExistingAccount(existingUserId: string) {
+    const { error: confirmError } = await admin.auth.admin.updateUserById(existingUserId, {
       email_confirm: true,
     });
-    if (error || !data.user) {
+    if (confirmError) {
       return failWithCause(
         res,
         400,
-        "update_failed",
+        "confirm_failed",
+        authFailureMessage(confirmError),
+        "auth-register: confirm existing account",
+        confirmError
+      );
+    }
+
+    const { data: existingProfile, error: lookupError } = await admin
+      .from("profiles")
+      .select("id")
+      .eq("id", existingUserId)
+      .maybeSingle();
+    if (lookupError) {
+      return failWithCause(
+        res,
+        400,
+        "profile_lookup_failed",
+        "تعذّر تحميل بيانات الحساب. سجّل الدخول وأعد المحاولة.",
+        "auth-register: existing profile lookup",
+        lookupError
+      );
+    }
+
+    // بروفايل مفقود فقط يُنشأ — والتريغر يفرض pending لغير المالك على أي حال
+    if (!existingProfile) {
+      const { error: insertError } = await admin
+        .from("profiles")
+        .insert(newProfileRow(existingUserId));
+      if (insertError) {
+        return failWithCause(
+          res,
+          400,
+          "profile_insert_failed",
+          "تعذّر حفظ بيانات الحساب. سجّل الدخول وأعد المحاولة.",
+          "auth-register: insert missing profile",
+          insertError
+        );
+      }
+    }
+
+    return res.status(200).json({ ok: true, email: authEmail, userId: existingUserId });
+  }
+
+  const existingUserId = await findUserIdByEmail(url, serviceKey, authEmail);
+  if (existingUserId) {
+    return resumeExistingAccount(existingUserId);
+  }
+
+  const { data, error } = await admin.auth.admin.createUser({
+    email: authEmail,
+    password,
+    email_confirm: true,
+    user_metadata: { identifierType, identifier },
+  });
+
+  if (error || !data.user) {
+    // سباق نادر: أُنشئ الحساب بين البحث والإنشاء
+    const again = await findUserIdByEmail(url, serviceKey, authEmail);
+    if (!again) {
+      return failWithCause(
+        res,
+        400,
+        "create_failed",
         authFailureMessage(error),
-        "auth-register: updateUserById",
+        "auth-register: createUser",
         error
       );
     }
-    userId = data.user.id;
-  } else {
-    const { data, error } = await admin.auth.admin.createUser({
-      email: authEmail,
-      password,
-      email_confirm: true,
-      user_metadata: { identifierType, identifier },
-    });
-    if (error || !data.user) {
-      // سباق نادر: أُنشئ الحساب بين البحث والإنشاء
-      const again = await findUserIdByEmail(url, serviceKey, authEmail);
-      if (!again) {
-        return failWithCause(
-          res,
-          400,
-          "create_failed",
-          authFailureMessage(error),
-          "auth-register: createUser",
-          error
-        );
-      }
-      const upd = await admin.auth.admin.updateUserById(again, {
-        password,
-        email_confirm: true,
-      });
-      if (upd.error || !upd.data.user) {
-        return failWithCause(
-          res,
-          400,
-          "update_failed",
-          authFailureMessage(upd.error),
-          "auth-register: updateUserById after race",
-          upd.error
-        );
-      }
-      userId = upd.data.user.id;
-    } else {
-      userId = data.user.id;
-    }
+    return resumeExistingAccount(again);
   }
 
-  const { error: profileError } = await admin.from("profiles").upsert(
-    {
-      id: userId,
-      identifier_type: identifierType,
-      identifier,
-      status: isOwner ? "approved" : "pending",
-      is_owner: isOwner,
-      full_name: profile?.fullName || null,
-      city: profile?.city || null,
-      package_name: isOwner ? "مالك التطبيق" : null,
-      last_seen_at: new Date().toISOString(),
-    },
-    { onConflict: "id" }
-  );
+  const userId = data.user.id;
+  const { error: profileError } = await admin
+    .from("profiles")
+    .upsert(newProfileRow(userId), { onConflict: "id" });
   if (profileError) {
     return failWithCause(
       res,
