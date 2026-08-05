@@ -10,7 +10,8 @@
     "cap:add:android": "npm run build && npx cap add android && npx cap sync android",
     "cap:add:ios": "npm run build && npx cap add ios && npx cap sync ios",
     "cap:sync": "npm run build && npx cap sync",
-    "verify:apk": "node scripts/verify-apk.mjs"
+    "verify:apk": "node scripts/verify-apk.mjs",
+    "verify:db": "node scripts/verify-db.mjs"
   },
   "dependencies": {
     "@capacitor/core": "^6.1.2",
