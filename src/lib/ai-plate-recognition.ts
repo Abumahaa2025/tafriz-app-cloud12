@@ -18,8 +18,9 @@ export async function recognizePlateFromImage(file: File): Promise<PlateRecognit
   });
 
   if (!res.ok) {
-    const message = await res.text().catch(() => "");
-    throw new Error(message || "تعذّر التعرف على اللوحة، حاول مرة أخرى");
+    // الخادم يرد بـ { error, message } — ما نعرض إلا الرسالة المكتوبة عندنا
+    const body = (await res.json().catch(() => ({}))) as { message?: string };
+    throw new Error(body.message || "تعذّر التعرف على اللوحة، حاول مرة أخرى");
   }
 
   return (await res.json()) as PlateRecognitionResult;

@@ -1,0 +1,17 @@
+{
+  "//": "tsconfig.json يغطّي src/ فقط، فالدوال الخادمية في api/ ما كانت تُفحص إطلاقًا قبل النشر. هذا الملف يفحصها بإعدادات Node.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "noEmit": true,
+    "strict": true
+  },
+  "include": ["api/**/*.ts", "lib/**/*.ts"]
+}

@@ -1,5 +1,17 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
+import { fail, failInternal, failWithCause } from "../lib/api/errors";
+import { isMissingConfig, readAnonKey, readOwnerIdentifier, readSupabaseSecrets } from "../lib/api/env";
+
+/**
+ * رسالة موحّدة لأي فشل مصدره قاعدة البيانات. نص Postgres الأصلي يروح للسجل
+ * فقط، لأنه يذكر أسماء الجداول والأعمدة والقيود وسياسات RLS بالاسم.
+ */
+const DB_FAILURE_MESSAGE = "تعذّر تنفيذ العملية. أعد المحاولة، وإن تكرر تواصل مع الإدارة.";
+
+/** يظهر للمالك فقط، وما يذكر أسماء ملفات أو تريغرات داخلية. */
+const MIGRATION_REQUIRED_MESSAGE =
+  "قاعدة البيانات تحتاج تحديثًا قبل تنفيذ هذه العملية — راجع docs/DATABASE-SETUP.md.";
 
 type Action =
   | "approve"
@@ -42,7 +54,7 @@ async function resolveRequester(
   if (!profile) return { user: userData.user, profile: null, admin };
 
   // إصلاح تلقائي: حساب المالك المعرّف يجب أن يبقى is_owner
-  const ownerIdent = (process.env.OWNER_IDENTIFIER || "0575051487").trim();
+  const ownerIdent = readOwnerIdentifier();
   if (profile.identifier === ownerIdent && (!profile.is_owner || profile.status !== "approved")) {
     await admin
       .from("profiles")
@@ -62,30 +74,37 @@ function makeCode() {
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+    return fail(res, 405, "method_not_allowed", "الطريقة غير مسموحة.");
   }
 
-  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
-  if (!url || !serviceKey || !anonKey) {
-    return res.status(503).json({ error: "missing_env" });
+  const secrets = readSupabaseSecrets();
+  const anonKey = readAnonKey();
+  if (isMissingConfig(secrets) || !anonKey) {
+    const missing = isMissingConfig(secrets) ? [...secrets.missing] : [];
+    if (!anonKey) missing.push("VITE_SUPABASE_ANON_KEY");
+    return fail(
+      res,
+      503,
+      "missing_env",
+      `إعدادات الخادم ناقصة (${missing.join(", ")}) — أضفها في Vercel.`
+    );
   }
+  const { url, serviceKey } = secrets;
 
   const action = (req.body?.action || "") as Action;
   const requester = await resolveRequester(req, url, anonKey, serviceKey);
   if (!requester) {
-    return res.status(401).json({ error: "unauthorized" });
+    return fail(res, 401, "unauthorized", "الجلسة منتهية. سجّل الدخول من جديد.");
   }
   const { user, profile, admin } = requester;
 
   try {
     if (action === "approve" || action === "revoke") {
       if (!profile?.is_owner) {
-        return res.status(403).json({ error: "owner_only" });
+        return fail(res, 403, "owner_only", "هذه العملية متاحة للإدارة فقط.");
       }
       const userId = String(req.body?.userId || "");
-      if (!userId) return res.status(400).json({ error: "missing_userId" });
+      if (!userId) return fail(res, 400, "missing_userId", "لم يُحدَّد الحساب المطلوب.");
 
       if (action === "approve") {
         const days = Number(req.body?.days || 30);
@@ -103,13 +122,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .select("id,status")
           .maybeSingle();
         if (error || !data) {
-          return res.status(400).json({ error: error?.message || "approve_failed" });
+          return failWithCause(
+            res,
+            400,
+            "approve_failed",
+            DB_FAILURE_MESSAGE,
+            "access-control: approve",
+            error
+          );
         }
         if (data.status !== "approved") {
-          return res.status(400).json({
-            error:
-              "approve_blocked_by_trigger — نفّذ supabase/migrate-fix-revoke-trigger.sql في Supabase",
-          });
+          return fail(res, 400, "approve_blocked_by_trigger", MIGRATION_REQUIRED_MESSAGE);
         }
         return res.status(200).json({ ok: true, profile: data });
       }
@@ -125,20 +148,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .select("id,status,package_name")
         .maybeSingle();
       if (error || !data) {
-        return res.status(400).json({ error: error?.message || "revoke_failed" });
+        return failWithCause(
+          res,
+          400,
+          "revoke_failed",
+          DB_FAILURE_MESSAGE,
+          "access-control: revoke",
+          error
+        );
       }
       if (data.status !== "revoked") {
-        return res.status(400).json({
-          error:
-            "revoke_blocked_by_trigger — نفّذ supabase/migrate-fix-revoke-trigger.sql في Supabase",
-        });
+        return fail(res, 400, "revoke_blocked_by_trigger", MIGRATION_REQUIRED_MESSAGE);
       }
       return res.status(200).json({ ok: true, profile: data });
     }
 
     if (action === "generateCode") {
       if (!profile?.is_owner) {
-        return res.status(403).json({ error: "owner_only" });
+        return fail(res, 403, "owner_only", "هذه العملية متاحة للإدارة فقط.");
       }
       const customRaw = String(req.body?.code || "")
         .trim()
@@ -147,27 +174,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (customRaw) {
         if (customRaw.length < 4 || customRaw.length > 24) {
-          return res.status(400).json({
-            error: "invalid_code_length",
-            message: "الرمز اليدوي يجب أن يكون بين 4 و 24 حرفًا",
-          });
+          return fail(res, 400, "invalid_code_length", "الرمز اليدوي يجب أن يكون بين 4 و 24 حرفًا");
         }
         if (!/^[A-Z0-9-]+$/.test(customRaw)) {
-          return res.status(400).json({
-            error: "invalid_code_chars",
-            message: "الرمز يقبل حروفًا إنجليزية وأرقامًا وشرطة فقط",
-          });
+          return fail(res, 400, "invalid_code_chars", "الرمز يقبل حروفًا إنجليزية وأرقامًا وشرطة فقط");
         }
         const code = customRaw.startsWith("TFZ-") ? customRaw : `TFZ-${customRaw.replace(/^TFZ-?/, "")}`;
         const { error } = await admin.from("activation_codes").insert({ code });
         if (error) {
           if (String(error.message || "").toLowerCase().includes("duplicate")) {
-            return res.status(400).json({
-              error: "duplicate_code",
-              message: "هذا الرمز موجود مسبقًا — اختر رمزًا آخر",
-            });
+            return fail(res, 400, "duplicate_code", "هذا الرمز موجود مسبقًا — اختر رمزًا آخر");
           }
-          return res.status(400).json({ error: error.message });
+          return failWithCause(
+            res,
+            400,
+            "code_insert_failed",
+            DB_FAILURE_MESSAGE,
+            "access-control: insert custom activation code",
+            error
+          );
         }
         return res.status(200).json({ ok: true, code });
       }
@@ -177,23 +202,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const { error } = await admin.from("activation_codes").insert({ code });
         if (!error) return res.status(200).json({ ok: true, code });
         if (!String(error.message || "").toLowerCase().includes("duplicate")) {
-          return res.status(400).json({ error: error.message });
+          return failWithCause(
+            res,
+            400,
+            "code_insert_failed",
+            DB_FAILURE_MESSAGE,
+            "access-control: insert generated activation code",
+            error
+          );
         }
         code = makeCode();
       }
-      return res.status(400).json({ error: "code_collision" });
+      return fail(res, 400, "code_collision", "تعذّر توليد رمز جديد. أعد المحاولة.");
     }
 
     if (action === "listCodes") {
       if (!profile?.is_owner) {
-        return res.status(403).json({ error: "owner_only" });
+        return fail(res, 403, "owner_only", "هذه العملية متاحة للإدارة فقط.");
       }
       const { data, error } = await admin
         .from("activation_codes")
         .select("code,created_at,used_by")
         .order("created_at", { ascending: false })
         .limit(100);
-      if (error) return res.status(400).json({ error: error.message });
+      if (error) {
+        return failWithCause(
+          res,
+          400,
+          "list_codes_failed",
+          DB_FAILURE_MESSAGE,
+          "access-control: listCodes",
+          error
+        );
+      }
       return res.status(200).json({
         ok: true,
         codes: (data ?? []).map((r) => ({
@@ -209,17 +250,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .trim()
         .toUpperCase()
         .replace(/\s+/g, "");
-      if (!raw) return res.status(400).json({ error: "missing_code" });
+      if (!raw) return fail(res, 400, "missing_code", "أدخل رمز التفعيل أولًا.");
 
       // رمز شخصي ثابت: لا يُفعّل الحساب الموقوف تلقائيًا — يحتاج موافقة المالك أو رمز يولّده المالك
       const normalizedPersonal = raw.replace(/[\s_]+/g, "-");
       if (/^TFZ-U-\d{6}$/.test(normalizedPersonal)) {
         if (profile?.status === "revoked") {
-          return res.status(403).json({
-            error: "personal_code_blocked_after_revoke",
-            message:
-              "الحساب موقوف. إعادة التفعيل فقط من الإدارة عبر إدارة التحكم أو برمز تفعيل ترسله الإدارة.",
-          });
+          return fail(
+            res,
+            403,
+            "personal_code_blocked_after_revoke",
+            "الحساب موقوف. إعادة التفعيل فقط من الإدارة عبر إدارة التحكم أو برمز تفعيل ترسله الإدارة."
+          );
         }
         let h = 2166136261;
         const id = user.id;
@@ -229,7 +271,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         const expected = `TFZ-U-${String(Math.abs(h) % 1_000_000).padStart(6, "0")}`;
         if (normalizedPersonal !== expected) {
-          return res.status(400).json({ error: "invalid_personal_code" });
+          return fail(res, 400, "invalid_personal_code", "الرمز الشخصي غير صحيح.");
         }
         const expires = new Date();
         expires.setDate(expires.getDate() + 30);
@@ -245,17 +287,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .select("id,status")
           .maybeSingle();
         if (upErr || !updated) {
-          return res.status(400).json({
-            error: upErr?.message || "profile_update_failed",
-            message:
-              "تعذّر التفعيل بالرمز الشخصي. إن كان الحساب موقوفًا فالتفعيل من الإدارة فقط.",
-          });
+          return failWithCause(
+            res,
+            400,
+            "profile_update_failed",
+            "تعذّر التفعيل بالرمز الشخصي. إن كان الحساب موقوفًا فالتفعيل من الإدارة فقط.",
+            "access-control: redeem personal code",
+            upErr
+          );
         }
         if (updated.status !== "approved") {
-          return res.status(400).json({
-            error:
-              "approve_blocked_by_trigger — نفّذ supabase/migrate-fix-revoke-trigger.sql في Supabase",
-          });
+          return fail(res, 400, "approve_blocked_by_trigger", MIGRATION_REQUIRED_MESSAGE);
         }
         return res.status(200).json({ ok: true, profile: updated });
       }
@@ -266,15 +308,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .eq("code", raw)
         .is("used_by", null)
         .maybeSingle();
-      if (findErr) return res.status(400).json({ error: findErr.message });
-      if (!codeRow) return res.status(400).json({ error: "invalid_or_used" });
+      if (findErr) {
+        return failWithCause(
+          res,
+          400,
+          "code_lookup_failed",
+          DB_FAILURE_MESSAGE,
+          "access-control: activation code lookup",
+          findErr
+        );
+      }
+      if (!codeRow) {
+        return fail(res, 400, "invalid_or_used", "رمز التفعيل غير صحيح أو مستخدم مسبقًا.");
+      }
 
       const { error: useErr } = await admin
         .from("activation_codes")
         .update({ used_by: user.id })
         .eq("code", raw)
         .is("used_by", null);
-      if (useErr) return res.status(400).json({ error: useErr.message });
+      if (useErr) {
+        return failWithCause(
+          res,
+          400,
+          "code_redeem_failed",
+          DB_FAILURE_MESSAGE,
+          "access-control: mark activation code used",
+          useErr
+        );
+      }
 
       const expires = new Date();
       expires.setDate(expires.getDate() + 30);
@@ -289,19 +351,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .select("id,status")
         .maybeSingle();
       if (upErr || !updated) {
-        return res.status(400).json({ error: upErr?.message || "profile_update_failed" });
+        return failWithCause(
+          res,
+          400,
+          "profile_update_failed",
+          DB_FAILURE_MESSAGE,
+          "access-control: approve after code redeem",
+          upErr
+        );
       }
       return res.status(200).json({ ok: true, profile: updated });
     }
 
     if (action === "replyFeedback") {
       if (!profile?.is_owner) {
-        return res.status(403).json({ error: "owner_only" });
+        return fail(res, 403, "owner_only", "هذه العملية متاحة للإدارة فقط.");
       }
       const threadId = String(req.body?.threadId || "").trim();
       const message = String(req.body?.message || "").trim();
       if (!threadId || !message) {
-        return res.status(400).json({ error: "missing_thread_or_message" });
+        return fail(res, 400, "missing_thread_or_message", "اكتب نص الرد أولًا.");
       }
 
       // دعم الرسائل القديمة: قد يكون thread_id فارغًا والـ UI يمرّر id الرسالة
@@ -312,7 +381,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .order("created_at", { ascending: true })
         .limit(1)
         .maybeSingle();
-      if (rootErr) return res.status(400).json({ error: rootErr.message });
+      if (rootErr) {
+        return failWithCause(
+          res,
+          400,
+          "thread_lookup_failed",
+          DB_FAILURE_MESSAGE,
+          "access-control: feedback thread lookup",
+          rootErr
+        );
+      }
 
       if (!root) {
         const byId = await admin
@@ -320,10 +398,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .select("id, user_id, identifier, thread_id")
           .eq("id", threadId)
           .maybeSingle();
-        if (byId.error) return res.status(400).json({ error: byId.error.message });
+        if (byId.error) {
+          return failWithCause(
+            res,
+            400,
+            "thread_lookup_failed",
+            DB_FAILURE_MESSAGE,
+            "access-control: feedback lookup by id",
+            byId.error
+          );
+        }
         root = byId.data;
       }
-      if (!root) return res.status(404).json({ error: "thread_not_found" });
+      if (!root) return fail(res, 404, "thread_not_found", "لم تُعثر على هذه المحادثة.");
 
       const resolvedThreadId = (root.thread_id as string | null) || (root.id as string);
       if (!root.thread_id) {
@@ -341,12 +428,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         read_by_user: false,
       });
       if (insertErr) {
-        return res.status(400).json({
-          error:
-            insertErr.message.includes("from_owner") || insertErr.message.includes("thread_id")
-              ? "نفّذ ملف supabase/migrate-feedback-chat.sql في Supabase أولًا"
-              : insertErr.message,
-        });
+        // نفحص نص الخطأ هنا على الخادم فقط، وما نمرّره للمتصفح
+        const missingChatColumns =
+          insertErr.message.includes("from_owner") || insertErr.message.includes("thread_id");
+        return failWithCause(
+          res,
+          400,
+          missingChatColumns ? "feedback_chat_migration_required" : "reply_failed",
+          missingChatColumns ? MIGRATION_REQUIRED_MESSAGE : DB_FAILURE_MESSAGE,
+          "access-control: insert owner reply",
+          insertErr
+        );
       }
 
       await admin
@@ -360,7 +452,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (action === "markFeedbackRead") {
       if (!profile?.is_owner) {
-        return res.status(403).json({ error: "owner_only" });
+        return fail(res, 403, "owner_only", "هذه العملية متاحة للإدارة فقط.");
       }
       const ids = Array.isArray(req.body?.ids)
         ? (req.body.ids as unknown[]).map((x) => String(x)).filter(Boolean)
@@ -374,7 +466,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .update({ read: true })
           .in("id", ids)
           .eq("from_owner", false);
-        if (error) return res.status(400).json({ error: error.message });
+        if (error) {
+          return failWithCause(
+            res,
+            400,
+            "mark_read_failed",
+            DB_FAILURE_MESSAGE,
+            "access-control: markFeedbackRead by ids",
+            error
+          );
+        }
       }
       if (identifier) {
         const { error } = await admin
@@ -382,7 +483,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .update({ read: true })
           .eq("identifier", identifier)
           .eq("from_owner", false);
-        if (error) return res.status(400).json({ error: error.message });
+        if (error) {
+          return failWithCause(
+            res,
+            400,
+            "mark_read_failed",
+            DB_FAILURE_MESSAGE,
+            "access-control: markFeedbackRead by identifier",
+            error
+          );
+        }
       }
       if (threadId) {
         await admin
@@ -397,13 +507,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .eq("from_owner", false);
       }
       if (!ids.length && !identifier && !threadId) {
-        return res.status(400).json({ error: "missing_target" });
+        return fail(res, 400, "missing_target", "لم تُحدَّد الرسائل المطلوبة.");
       }
       return res.status(200).json({ ok: true });
     }
 
-    return res.status(400).json({ error: "unknown_action" });
+    return fail(res, 400, "unknown_action", "طلب غير معروف.");
   } catch (e) {
-    return res.status(500).json({ error: e instanceof Error ? e.message : "server_error" });
+    return failInternal(res, `access-control: ${action}`, e);
   }
 }
