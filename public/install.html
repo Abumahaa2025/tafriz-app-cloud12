@@ -5,7 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>تثبيت تطبيق الفرز</title>
     <meta name="theme-color" content="#0d7d6f" />
+    <link rel="manifest" href="/manifest.webmanifest?v=3" />
     <link rel="icon" type="image/png" href="/icon-192-v3.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon-v3.png" />
     <style>
       :root {
         --bg: #f4f7f6;
@@ -33,6 +35,7 @@
         border: 1px solid rgba(13,125,111,.25);
       }
       h1 { font-size: 1.35rem; margin: 0; color: var(--primary); }
+      h2 { font-size: 1.05rem; margin: 0 0 10px; color: var(--primary); }
       .card {
         background: var(--card);
         border-radius: 18px;
@@ -47,6 +50,7 @@
         display: block; width: 100%; text-align: center; text-decoration: none;
         background: var(--primary); color: #fff; font-weight: 700;
         border-radius: 14px; padding: 14px 16px; margin-top: 12px;
+        border: none; font-family: inherit; font-size: 1rem; cursor: pointer;
       }
       .btn.secondary {
         background: #fff; color: var(--primary);
@@ -56,6 +60,17 @@
         font-size: 0.82rem; color: #8a4b00; background: #fff7e8;
         border: 1px solid #f0d39a; border-radius: 12px; padding: 10px 12px;
       }
+      .alert {
+        font-size: 0.9rem; color: #7c1d1d; background: #fdecec;
+        border: 1px solid #f0b4b4; border-radius: 12px; padding: 12px;
+        line-height: 1.7; margin: 0 0 12px;
+      }
+      .alert strong { color: #7c1d1d; }
+      .hint { font-size: 0.82rem; color: var(--muted); margin: 10px 0 0; }
+      .share-icon {
+        display: inline-block; padding: 0 3px; font-weight: 700; color: var(--primary);
+      }
+      [hidden] { display: none !important; }
     </style>
   </head>
   <body>
@@ -68,7 +83,26 @@
         </div>
       </div>
 
-      <div class="card">
+      <!-- متصفح مدمج داخل تطبيق ثاني (واتساب/تيليجرام/فيسبوك): التنزيل هنا ينتج
+           ملفًا يظهر كمستند ولا يصل لمثبّت الحِزم، فنوقف المستخدم قبل ما يجرّب. -->
+      <div class="card" id="card-inapp" hidden>
+        <p class="alert">
+          <strong>لا تُثبّت من هنا.</strong>
+          أنت تفتح الصفحة داخل متصفح مدمج في تطبيق آخر (واتساب أو تيليجرام مثلًا)،
+          وهذا المتصفح ينزّل الملف كمستند ولا يسلّمه لمثبّت التطبيقات — فيظهر لك
+          «مستند» بدل تطبيق.
+        </p>
+        <p>
+          افتح هذه الصفحة في متصفح <strong id="inapp-browser">Chrome</strong> أولًا،
+          ثم ثبّت من هناك.
+        </p>
+        <a class="btn" id="btn-open-chrome" href="#">افتح الصفحة في Chrome</a>
+        <button class="btn secondary" type="button" id="btn-copy-link">انسخ الرابط</button>
+        <p class="hint" id="copy-done" hidden>تم نسخ الرابط — الصقه في شريط عنوان Chrome.</p>
+      </div>
+
+      <!-- أندرويد: المسار الأساسي (كان هو المحتوى الوحيد سابقًا). -->
+      <div class="card" id="card-android">
         <p class="note">
           مهم: إذا ظهرت رسالة «تعذّر التثبيت / الملف غير مثبت» احذف أي نسخة قديمة من «تفريز/الفرز» أولًا، ثم ثبّت من الزر أدناه.
         </p>
@@ -78,8 +112,69 @@
           <li>اضغط «تحميل وتثبيت APK».</li>
           <li>بعد التثبيت افتح التطبيق واضغط زر التحديث أعلى الصفحة.</li>
         </ol>
-        <a class="btn" href="/downloads/Tafriz.apk" download="Tafriz.apk">تحميل وتثبيت APK</a>
+        <a class="btn" id="btn-apk" href="/downloads/Tafriz.apk" download="Tafriz.apk">تحميل وتثبيت APK</a>
+        <button class="btn secondary" type="button" id="btn-pwa" hidden>تثبيت مباشر بدون تنزيل ملف</button>
         <a class="btn secondary" href="/">فتح النسخة الويب مباشرة</a>
+      </div>
+
+      <!-- آيفون/آيباد: ملف APK لا يُثبَّت على iOS أبدًا، النظام يحفظه في «الملفات»
+           كمستند. الطريقة الصحيحة هي إضافة الموقع للشاشة الرئيسية. -->
+      <div class="card" id="card-ios" hidden>
+        <h2>التثبيت على آيفون / آيباد</h2>
+        <p class="alert">
+          ملف APK خاص بأندرويد فقط. لو نزّلته على الآيفون يحفظه النظام في تطبيق
+          «الملفات» كمستند ولن يصير تطبيقًا — لذلك أخفينا الزر.
+        </p>
+        <p>على الآيفون يُثبَّت «الفرز» كتطبيق من متصفح Safari بهذه الخطوات:</p>
+        <ol>
+          <li>افتح هذه الصفحة في متصفح <strong>Safari</strong>.</li>
+          <li>اضغط زر المشاركة <span class="share-icon">⇪</span> في شريط Safari الأسفل.</li>
+          <li>اختر <strong>«إضافة إلى الشاشة الرئيسية»</strong>.</li>
+          <li>اضغط «إضافة» — تظهر أيقونة «الفرز» مع تطبيقاتك.</li>
+        </ol>
+        <a class="btn" href="/">فتح النسخة الويب الآن</a>
+        <p class="hint">
+          هذه النسخة تعمل كتطبيق كامل الشاشة، وتحديثاتها تصل تلقائيًا بدون إعادة تثبيت.
+        </p>
+      </div>
+
+      <!-- كمبيوتر: الملف هنا مجرد ملف على القرص، فنوجّه المستخدم للجوال. -->
+      <div class="card" id="card-desktop" hidden>
+        <h2>أنت تستخدم كمبيوتر</h2>
+        <p>
+          ملف APK يُثبَّت على جوال أندرويد فقط؛ على الكمبيوتر يبقى ملفًا على القرص.
+          افتح هذه الصفحة من جوالك، أو استخدم النسخة الويب مباشرة.
+        </p>
+        <button class="btn secondary" type="button" id="btn-copy-link-desktop">انسخ الرابط لإرساله للجوال</button>
+        <p class="hint" id="copy-done-desktop" hidden>تم نسخ الرابط.</p>
+        <a class="btn" href="/">فتح النسخة الويب مباشرة</a>
+      </div>
+
+      <!-- الصفحة مفتوحة من داخل التطبيق المثبّت أصلًا. -->
+      <div class="card" id="card-installed" hidden>
+        <h2>التطبيق مثبّت عندك بالفعل</h2>
+        <p>
+          أنت تفتح هذه الصفحة من داخل تطبيق «الفرز» المثبّت، فلا تحتاج تنزيل APK
+          مرة ثانية. التحديثات تصل تلقائيًا من السحابة.
+        </p>
+        <a class="btn" href="/">رجوع إلى التطبيق</a>
+      </div>
+
+      <div class="card" id="card-troubleshoot">
+        <h2>إذا نزل الملف وظهر كـ «مستند»</h2>
+        <p>
+          معناه أن المتصفح الذي نزّل الملف ما سلّمه لمثبّت التطبيقات. عالجها كذا:
+        </p>
+        <ol>
+          <li>لا تفتح الملف من تطبيق «المستندات» أو محرّر النصوص.</li>
+          <li>افتح <strong>«الملفات / My Files»</strong> ثم مجلد <strong>«التنزيلات»</strong>.</li>
+          <li>اضغط على <strong>Tafriz.apk</strong> واختر «مثبّت الحِزم / Package installer».</li>
+          <li>إن لم يظهر الخيار: احذف الملف، وأعد التنزيل من متصفح <strong>Chrome</strong> مباشرة (لا من رابط داخل واتساب).</li>
+        </ol>
+        <p class="hint">
+          الملف الصحيح حجمه حوالي ١ ميجابايت وامتداده <code>.apk</code>؛ إذا نزل بحجم
+          بسيط جدًا (أقل من ١٠ كيلوبايت) فالتنزيل ما اكتمل — أعد المحاولة.
+        </p>
       </div>
 
       <div class="card">
@@ -89,5 +184,123 @@
         </p>
       </div>
     </div>
+
+    <script>
+      (function () {
+        var ua = navigator.userAgent || "";
+        var isAndroid = /Android/i.test(ua);
+        var isIOS =
+          /iPhone|iPad|iPod/i.test(ua) ||
+          (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+        // متصفحات مدمجة داخل تطبيقات أخرى: أندرويد يضع "; wv" في الـ UA، وبقية
+        // العلامات لتطبيقات تستخدم متصفحًا مدمجًا بدون هذه العلامة.
+        var isInAppBrowser =
+          /; wv\)/i.test(ua) ||
+          /\bFBAN|\bFBAV|FB_IAB|Instagram|Line\/|MicroMessenger|Snapchat|TikTok|Twitter|WhatsApp|GSA\//i.test(ua);
+
+        // الصفحة معروضة من داخل تطبيق مثبّت (TWA أو PWA) لا من متصفح عادي.
+        var isStandalone =
+          window.navigator.standalone === true ||
+          (window.matchMedia &&
+            (window.matchMedia("(display-mode: standalone)").matches ||
+              window.matchMedia("(display-mode: fullscreen)").matches ||
+              window.matchMedia("(display-mode: minimal-ui)").matches)) ||
+          document.referrer.indexOf("android-app://") === 0;
+
+        function show(id, visible) {
+          var el = document.getElementById(id);
+          if (el) el.hidden = !visible;
+        }
+
+        var inTwaFallback = isStandalone && isInAppBrowser;
+        var blockInApp = isInAppBrowser && !isStandalone;
+
+        if (isStandalone && !inTwaFallback) {
+          show("card-installed", true);
+          show("card-android", false);
+          show("card-troubleshoot", false);
+        } else if (blockInApp) {
+          show("card-inapp", true);
+          show("card-android", false);
+          show("card-ios", isIOS);
+          show("card-troubleshoot", !isIOS);
+          if (isIOS) {
+            var browserName = document.getElementById("inapp-browser");
+            if (browserName) browserName.textContent = "Safari";
+          }
+        } else if (isIOS) {
+          show("card-ios", true);
+          show("card-android", false);
+          show("card-troubleshoot", false);
+        } else if (!isAndroid) {
+          show("card-desktop", true);
+          show("card-android", false);
+          show("card-troubleshoot", false);
+        }
+
+        // في المتصفح المدمج على أندرويد نستطيع تحويله إلى Chrome مباشرة عبر
+        // رابط intent؛ على iOS لا يمكن فرض المتصفح فيبقى نسخ الرابط هو الحل.
+        var openChrome = document.getElementById("btn-open-chrome");
+        if (openChrome) {
+          if (isAndroid) {
+            openChrome.href =
+              "intent://" +
+              location.host +
+              location.pathname +
+              "#Intent;scheme=https;package=com.android.chrome;end";
+          } else {
+            openChrome.hidden = true;
+          }
+        }
+
+        function wireCopy(buttonId, doneId) {
+          var button = document.getElementById(buttonId);
+          var done = document.getElementById(doneId);
+          if (!button) return;
+          button.addEventListener("click", function () {
+            var link = location.origin + location.pathname;
+            var reveal = function () {
+              if (done) done.hidden = false;
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(link).then(reveal, function () {
+                window.prompt("انسخ الرابط:", link);
+              });
+            } else {
+              window.prompt("انسخ الرابط:", link);
+            }
+          });
+        }
+        wireCopy("btn-copy-link", "copy-done");
+        wireCopy("btn-copy-link-desktop", "copy-done-desktop");
+
+        // تثبيت مباشر (WebAPK) لمن يفتح الصفحة في Chrome على أندرويد: أيقونة
+        // تطبيق حقيقية بدون تنزيل ملف APK نهائيًا — أضمن مسار لمن يفشل عنده APK.
+        var deferredPrompt = null;
+        var pwaButton = document.getElementById("btn-pwa");
+        window.addEventListener("beforeinstallprompt", function (event) {
+          event.preventDefault();
+          deferredPrompt = event;
+          if (pwaButton && !pwaButton.closest(".card").hidden) pwaButton.hidden = false;
+        });
+        if (pwaButton) {
+          pwaButton.addEventListener("click", function () {
+            if (!deferredPrompt) return;
+            deferredPrompt.prompt();
+            deferredPrompt.userChoice.then(function () {
+              deferredPrompt = null;
+              pwaButton.hidden = true;
+            });
+          });
+        }
+
+        // تسجيل نفس خدمة الخلفية المستخدمة في التطبيق حتى يسمح Chrome بالتثبيت
+        // المباشر من هذه الصفحة أيضًا.
+        if ("serviceWorker" in navigator) {
+          navigator.serviceWorker.register("/sw.js").catch(function () {});
+        }
+      })();
+    </script>
   </body>
 </html>
