@@ -2,7 +2,7 @@ import * as React from "react";
 import { MapPin, LocateFixed, ArrowRight, Car, ExternalLink, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { loadLocal } from "@/lib/storage";
+import { loadLocalCached } from "@/lib/storage";
 import { SortResult } from "@/lib/sort-logic";
 import { googleMapsOpenUrl } from "@/lib/map-coords";
 import { ClusterMap } from "@/components/ClusterMap";
@@ -42,7 +42,7 @@ export default function MapsPage({ onBack }: { onBack?: () => void }) {
   }, []);
 
   const liveFleet = React.useMemo(() => {
-    const state = loadLocal<LastSortState>("last_sort_state", { result: null });
+    const state = loadLocalCached<LastSortState>("last_sort_state", { result: null });
     return (state.result?.matchedRows ?? []) as FleetItem[];
   }, [tick]);
 

@@ -162,6 +162,22 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
     }
   }
 
+  /**
+   * آخر ورقة *جاءت من التخزين* لا من تعديل المستخدم.
+   *
+   * كل تنقّل بين أيقونات الشريط السفلي يفكّ هذي الصفحة ويعيد بناءها، فتبدأ
+   * حالتها من null. بدون هذا الحرس كانت تأثيرات الحفظ أدناه تعمل على القيمة
+   * الابتدائية null فتحذف الأوراق المحفوظة، ثم تنتهي الاستعادة فتعيد كتابة
+   * الورقة المدموجة كاملة — قراءة ودمج وحذف وكتابة لكل الصفوف في كل مرة يلمس
+   * المستخدم أيقونة. وكتابة IndexedDB تنسخ المصفوفة كلها على الخيط الرئيسي،
+   * وهذا هو سبب تعليق التطبيق عند التنقل.
+   *
+   * نقارن بالمرجع (===) لا براية زمنية، حتى لا يعتمد الأمر على ترتيب دمج
+   * React لتحديثات الحالة مع انتهاء الوعد.
+   */
+  const storedDataRef = React.useRef<ParsedSheet | null>(null);
+  const storedReferralRef = React.useRef<ParsedSheet | null>(null);
+
   // استعادة أوراق الداتا الثقيلة من IndexedDB (بدون تجميد الواجهة)
   React.useEffect(() => {
     let cancelled = false;
@@ -172,7 +188,10 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
       loadSortLibrary(),
     ]).then(([data, referral, baseline, lib]) => {
       if (cancelled) return;
-      if (referral?.rows?.length) setReferralSheet(referral);
+      if (referral?.rows?.length) {
+        storedReferralRef.current = referral;
+        setReferralSheet(referral);
+      }
       if (Array.isArray(baseline) && baseline.length) {
         baselineRef.current = new Set(baseline.filter(Boolean));
       }
@@ -180,6 +199,7 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
         setLibrary(lib);
         const merged = mergeEnabledSheets(lib);
         if (merged) {
+          storedDataRef.current = merged;
           setDataSheet(merged);
           setDataFile({ name: `${lib.filter((f) => f.enabled).length} ملف مفعّل` });
         }
@@ -187,6 +207,7 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
         const seeded = [createLibraryFile(initial.dataFileMeta?.name ?? "الداتا.xlsx", data, true)];
         setLibrary(seeded);
         saveSortLibrary(seeded).catch(() => {});
+        storedDataRef.current = data;
         setDataSheet(data);
       }
     });
@@ -224,12 +245,16 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
     return () => clearTimeout(timer);
   }, [dataFile, referralFile, plateColumn, streetColumn, mapColumn, referralPlateColumn, result]);
 
+  // ما جاء من التخزين لا يُعاد كتابته إليه — وإلا مسحنا المحفوظ عند البناء ثم
+  // أعدنا كتابة كل الصفوف من جديد
   React.useEffect(() => {
+    if (dataSheet === storedDataRef.current) return;
     if (dataSheet) idbSet(SORT_DATA_IDB, dataSheet).catch(() => {});
     else idbRemove(SORT_DATA_IDB).catch(() => {});
   }, [dataSheet]);
 
   React.useEffect(() => {
+    if (referralSheet === storedReferralRef.current) return;
     if (referralSheet) idbSet(SORT_REFERRAL_IDB, referralSheet).catch(() => {});
     else idbRemove(SORT_REFERRAL_IDB).catch(() => {});
   }, [referralSheet]);
