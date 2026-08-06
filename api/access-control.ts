@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 import { fail, failInternal, failWithCause } from "../lib/api/errors.js";
 import { isMissingConfig, readAnonKey, readOwnerIdentifier, readSupabaseSecrets } from "../lib/api/env.js";
+import { personalCodeMatches, serverPersonalCode } from "../lib/api/personal-code.js";
 
 /**
  * رسالة موحّدة لأي فشل مصدره قاعدة البيانات. نص Postgres الأصلي يروح للسجل
@@ -19,6 +20,7 @@ type Action =
   | "generateCode"
   | "listCodes"
   | "redeemCode"
+  | "personalCodes"
   | "replyFeedback"
   | "markFeedbackRead";
 
@@ -263,14 +265,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             "الحساب موقوف. إعادة التفعيل فقط من الإدارة عبر إدارة التحكم أو برمز تفعيل ترسله الإدارة."
           );
         }
-        let h = 2166136261;
-        const id = user.id;
-        for (let i = 0; i < id.length; i++) {
-          h ^= id.charCodeAt(i);
-          h = Math.imul(h, 16777619);
+        // الاشتقاق بسرّ الخادم: الصيغة القديمة كانت تُحسب من معرّف الحساب وحده
+        // بخوارزمية منشورة في حزمة المتصفح، فكان أي حساب "قيد المراجعة" يفعّل
+        // نفسه بدون موافقة الإدارة.
+        if (!serverPersonalCode(user.id)) {
+          return fail(
+            res,
+            503,
+            "personal_code_unavailable",
+            "التفعيل بالرمز الشخصي غير متاح حاليًا. اطلب من الإدارة تفعيل حسابك مباشرة."
+          );
         }
-        const expected = `TFZ-U-${String(Math.abs(h) % 1_000_000).padStart(6, "0")}`;
-        if (normalizedPersonal !== expected) {
+        if (!personalCodeMatches(user.id, normalizedPersonal)) {
           return fail(res, 400, "invalid_personal_code", "الرمز الشخصي غير صحيح.");
         }
         const expires = new Date();
@@ -361,6 +367,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         );
       }
       return res.status(200).json({ ok: true, profile: updated });
+    }
+
+    if (action === "personalCodes") {
+      if (!profile?.is_owner) {
+        return fail(res, 403, "owner_only", "هذه العملية متاحة للإدارة فقط.");
+      }
+      const ids = Array.isArray(req.body?.userIds)
+        ? (req.body.userIds as unknown[]).map((x) => String(x)).filter(Boolean).slice(0, 500)
+        : [];
+      if (ids.length === 0) {
+        return fail(res, 400, "missing_userIds", "لم تُحدَّد الحسابات المطلوبة.");
+      }
+      const codes: Record<string, string> = {};
+      for (const id of ids) {
+        const code = serverPersonalCode(id);
+        if (code) codes[id] = code;
+      }
+      return res.status(200).json({ ok: true, codes });
     }
 
     if (action === "replyFeedback") {

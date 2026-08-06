@@ -336,6 +336,14 @@ export const localBackend: Backend = {
     return loadLocal<ActivationCode[]>(ACTIVATION_CODES_KEY, []).reverse();
   },
 
+  // الوضع المحلي جهاز واحد بلا خادم: لا يوجد سرّ نخفيه، والاشتقاق نفسه يبقى.
+  async personalCodes(userIds) {
+    const { personalActivationCode } = await import("./personal-code");
+    const out: Record<string, string> = {};
+    for (const id of userIds) out[id] = personalActivationCode(id);
+    return out;
+  },
+
   async redeemActivationCode(code) {
     const sessionId = loadLocal<string | null>(SESSION_KEY, null);
     if (!sessionId) return false;

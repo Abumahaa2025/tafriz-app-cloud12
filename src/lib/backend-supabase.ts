@@ -337,6 +337,14 @@ export const supabaseBackend: Backend = {
     await callAccessControl("revoke", { userId: id });
   },
 
+  async personalCodes(userIds) {
+    if (userIds.length === 0) return {};
+    const res = await callAccessControl<{ codes?: Record<string, string> }>("personalCodes", {
+      userIds,
+    });
+    return res.codes ?? {};
+  },
+
   async submitFeedback(identifier, message, threadId) {
     const db = requireClient();
     const { data: sessionData } = await db.auth.getSession();
