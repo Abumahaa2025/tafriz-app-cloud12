@@ -17,6 +17,7 @@ import { backend } from "@/lib/backend";
 import { FeedbackNotifyWatcher } from "@/components/FeedbackNotifyWatcher";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { RefreshAppButton } from "@/components/RefreshAppButton";
+import { InstallAppBanner } from "@/components/InstallAppBanner";
 
 type OverlayPage = MenuTarget | "ai-scan" | null;
 
@@ -114,6 +115,7 @@ export default function App() {
         <RefreshAppButton />
         <ThemeToggle />
         <Gate />
+        <InstallAppBanner />
       </AuthProvider>
     </ErrorBoundary>
   );
