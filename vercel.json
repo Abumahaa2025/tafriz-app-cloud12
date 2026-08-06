@@ -3,6 +3,33 @@
   "outputDirectory": "dist",
   "framework": "vite",
   "installCommand": "npm install",
+  "redirects": [
+    {
+      "source": "/app",
+      "destination": "/install.html",
+      "permanent": false
+    },
+    {
+      "source": "/downloads/Tafriz.apk",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": ".*(; ?wv\\)|FBAN|FBAV|FB_IAB|Instagram|Line/|MicroMessenger|Snapchat|TikTok|Twitter).*"
+        }
+      ],
+      "destination": "/install.html?src=inapp",
+      "permanent": false
+    },
+    {
+      "source": "/downloads/Tafriz.apk",
+      "has": [
+        { "type": "header", "key": "user-agent", "value": ".*(iPhone|iPad|iPod).*" }
+      ],
+      "destination": "/install.html?src=ios",
+      "permanent": false
+    }
+  ],
   "rewrites": [
     {
       "source": "/((?!\\.well-known/|downloads/|install\\.html|.*\\.apk$).*)",

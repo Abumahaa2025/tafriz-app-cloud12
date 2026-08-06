@@ -6,6 +6,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { fail, failInternal, failUpstream } from "../lib/api/errors.js";
 import { readAnthropicKey } from "../lib/api/env.js";
+import { resolveApprovedUser } from "../lib/api/auth.js";
 
 export const config = {
   api: { bodyParser: false },
@@ -59,6 +60,25 @@ async function readImageAsBase64(req: VercelRequest): Promise<{ base64: string; 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
     return fail(res, 405, "method_not_allowed", "الطريقة غير مسموحة.");
+  }
+
+  // المصادقة قبل أي شيء: هذه الدالة تستهلك رصيد مزوّد مدفوع، وكانت مفتوحة
+  // للإنترنت بلا أي تحقّق. الفحص قبل قراءة المفتاح أيضًا حتى لا يعرف زائر
+  // غير مصرَّح له ما إذا كان المفتاح مضبوطًا أصلًا.
+  const auth = await resolveApprovedUser(req.headers.authorization);
+  if (!auth.ok) {
+    if (auth.reason === "missing_env") {
+      return fail(
+        res,
+        503,
+        "missing_env",
+        `إعدادات الخادم ناقصة (${auth.missing.join(", ")}) — أضفها في Vercel.`
+      );
+    }
+    if (auth.reason === "not_approved") {
+      return fail(res, 403, "not_approved", "حسابك غير مفعّل بعد. راجع الإدارة.");
+    }
+    return fail(res, 401, "unauthorized", "الجلسة منتهية. سجّل الدخول من جديد.");
   }
 
   const apiKey = readAnthropicKey();

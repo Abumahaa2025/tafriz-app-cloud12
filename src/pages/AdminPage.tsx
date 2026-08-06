@@ -21,7 +21,6 @@ import { PageBackHeader } from "@/components/PageBackHeader";
 import { backend } from "@/lib/backend";
 import { AppUser, FeedbackItem, ErrorReportItem, ActivationCode } from "@/lib/backend-types";
 import { getSupportPhones, setSupportPhones, SupportPhone } from "@/lib/support-contact";
-import { personalActivationCode } from "@/lib/personal-code";
 
 const STATUS_LABEL: Record<AppUser["status"], string> = {
   pending: "قيد المراجعة",
@@ -37,6 +36,7 @@ export default function AdminPage({ onBack }: { onBack: () => void }) {
   const [feedback, setFeedback] = React.useState<FeedbackItem[]>([]);
   const [errors, setErrors] = React.useState<ErrorReportItem[]>([]);
   const [codes, setCodes] = React.useState<ActivationCode[]>([]);
+  const [personalCodes, setPersonalCodes] = React.useState<Record<string, string>>({});
   const [manualCode, setManualCode] = React.useState("");
   const [copiedCode, setCopiedCode] = React.useState<string | null>(null);
   const [codesBusy, setCodesBusy] = React.useState(false);
@@ -52,7 +52,15 @@ export default function AdminPage({ onBack }: { onBack: () => void }) {
   }
 
   const refresh = React.useCallback(async () => {
-    setUsers(await backend.listUsers());
+    const list = await backend.listUsers();
+    setUsers(list);
+    // الرمز الشخصي يأتي من الخادم: اشتقاقه في المتصفح كان يعني أن المستخدم
+    // يقدر يحسب رمزه بنفسه ويفعّل حسابه بدون موافقة الإدارة.
+    try {
+      setPersonalCodes(await backend.personalCodes(list.map((u) => u.id)));
+    } catch {
+      setPersonalCodes({});
+    }
     setFeedback(await backend.listFeedback());
     setErrors(await backend.listErrors());
     setCodes(await backend.listActivationCodes());
@@ -191,7 +199,7 @@ export default function AdminPage({ onBack }: { onBack: () => void }) {
                         : "لم يدخل بعد"}
                 </p>
                 <p className="rounded-lg bg-muted/60 px-2 py-1 text-[11px] font-bold" dir="ltr">
-                  رمز شخصي: {personalActivationCode(u.id)}
+                  رمز شخصي: {personalCodes[u.id] ?? "…"}
                 </p>
                 {!u.isOwner && (
                   <div className="flex gap-2">

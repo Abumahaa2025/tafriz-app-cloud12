@@ -113,6 +113,11 @@ export interface Backend {
   listUsers(): Promise<AppUser[]>;
   approveUser(id: string, packageName: string, days: number): Promise<void>;
   revokeUser(id: string): Promise<void>;
+  /**
+   * الرموز الشخصية للحسابات المطلوبة، للمالك فقط. تُشتق على الخادم بسرّ لا يصل
+   * للمتصفح، فلا يستطيع المستخدم حساب رمزه بنفسه ويفعّل حسابه بدون موافقة.
+   */
+  personalCodes(userIds: string[]): Promise<Record<string, string>>;
   /** رسالة جديدة أو رد داخل خيط موجود (من المستخدم) */
   submitFeedback(identifier: string, message: string, threadId?: string): Promise<void>;
   /** رد المالك داخل خيط محادثة */
