@@ -1,3 +1,5 @@
+import { supabase } from "./supabase-client";
+
 export interface PlateRecognitionResult {
   plate: string;
   raw?: string;
@@ -12,8 +14,14 @@ export async function recognizePlateFromImage(file: File): Promise<PlateRecognit
   const formData = new FormData();
   formData.append("image", file);
 
+  // الدالة الخادمية تتحقق من الجلسة قبل أن تنادي المزوّد المدفوع.
+  const headers: Record<string, string> = {};
+  const token = (await supabase?.auth.getSession())?.data.session?.access_token;
+  if (token) headers.Authorization = `Bearer ${token}`;
+
   const res = await fetch("/api/recognize-plate", {
     method: "POST",
+    headers,
     body: formData,
   });
 
