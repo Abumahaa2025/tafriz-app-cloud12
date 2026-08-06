@@ -169,6 +169,29 @@
         <a class="btn" href="/">رجوع إلى التطبيق</a>
       </div>
 
+      <!-- متصفح أندرويد غير Chrome (سامسونج، Mi، Opera…). سببه العملي: هذه
+           المتصفحات تسلّم ملف APK لنظام الملفات فيفتحه تطبيق مستندات (WPS مثلًا)
+           بدل مثبّت الحِزم، و«إضافة إلى شاشة التطبيقات» فيها تُنشئ اختصارًا يفتح
+           داخل المتصفح لا تطبيقًا مستقلًا. -->
+      <div class="card" id="card-otherbrowser" hidden>
+        <p class="alert">
+          <strong>متصفحك ليس Chrome.</strong>
+          هذا المتصفح (<span id="otherbrowser-name">Samsung Internet</span>) يسلّم ملف
+          التثبيت لتطبيق مستندات مثل WPS بدل مثبّت التطبيقات — فيظهر لك «ملف حزمة
+          التثبيت» ولا يُثبَّت. وزر «إضافة إلى شاشة التطبيقات» فيه يصنع اختصارًا
+          يفتح داخل المتصفح، لا تطبيقًا.
+        </p>
+        <p>افتح هذه الصفحة في <strong>Chrome</strong> ثم ثبّت من هناك — أضمن مسار.</p>
+        <a class="btn" id="btn-open-chrome-2" href="#">افتح الصفحة في Chrome</a>
+        <button class="btn secondary" type="button" id="btn-copy-link-other">انسخ الرابط</button>
+        <p class="hint" id="copy-done-other" hidden>تم نسخ الرابط — الصقه في شريط عنوان Chrome.</p>
+        <p class="hint">
+          إن لم يكن Chrome موجودًا: ثبّته من متجر Play أولًا. وامسح نسخ
+          <code>Tafriz.apk</code> المتكرّرة من «التنزيلات» — تكرارها لا يعني فشلًا في
+          الملف، فكل ضغطة تنزّل نسخة جديدة.
+        </p>
+      </div>
+
       <div class="card" id="card-troubleshoot">
         <h2>إذا نزل الملف وظهر كـ «مستند»</h2>
         <p>
@@ -178,6 +201,12 @@
           <li>لا تفتح الملف من تطبيق «المستندات» أو محرّر النصوص.</li>
           <li>افتح <strong>«الملفات / My Files»</strong> ثم مجلد <strong>«التنزيلات»</strong>.</li>
           <li>اضغط على <strong>Tafriz.apk</strong> واختر «مثبّت الحِزم / Package installer».</li>
+          <li>
+            إذا فتحه <strong>WPS Office</strong> أو «المستندات» تلقائيًا فهو مسجّل
+            كتطبيق افتراضي للملف: الإعدادات ▸ التطبيقات ▸ WPS Office ▸
+            <strong>«التعيين كافتراضي»</strong> ▸ «مسح الإعدادات الافتراضية»، ثم أعد
+            الضغط على الملف واختر مثبّت الحِزم.
+          </li>
           <li>إن لم يظهر الخيار: احذف الملف، وأعد التنزيل من متصفح <strong>Chrome</strong> مباشرة (لا من رابط داخل واتساب).</li>
         </ol>
         <p class="hint">
@@ -205,6 +234,24 @@
         var src = (location.search.match(/[?&]src=([a-z]+)/i) || [])[1] || "";
         var forcedInApp = src.toLowerCase() === "inapp";
         var forcedIOS = src.toLowerCase() === "ios";
+        var forcedOtherBrowser = src.toLowerCase() === "browser";
+
+        // متصفحات أندرويد غير Chrome: تسلّم ملف APK لتطبيق مستندات بدل مثبّت
+        // الحِزم، و«إضافة إلى شاشة التطبيقات» فيها اختصار لا تطبيق مستقل.
+        var otherBrowserMatch = ua.match(
+          /(SamsungBrowser|MiuiBrowser|HeyTapBrowser|OppoBrowser|VivoBrowser|HuaweiBrowser|UCBrowser|YaBrowser)|OPR\//
+        );
+        var isOtherAndroidBrowser = forcedOtherBrowser || (isAndroid && !!otherBrowserMatch);
+        var OTHER_BROWSER_LABELS = {
+          SamsungBrowser: "Samsung Internet",
+          MiuiBrowser: "Mi Browser",
+          HeyTapBrowser: "متصفح OPPO",
+          OppoBrowser: "متصفح OPPO",
+          VivoBrowser: "متصفح vivo",
+          HuaweiBrowser: "متصفح Huawei",
+          UCBrowser: "UC Browser",
+          YaBrowser: "Yandex",
+        };
 
         var isIOS =
           forcedIOS ||
@@ -253,6 +300,15 @@
           show("card-ios", true);
           show("card-android", false);
           show("card-troubleshoot", false);
+        } else if (isOtherAndroidBrowser) {
+          show("card-otherbrowser", true);
+          show("card-android", false);
+          show("card-troubleshoot", true);
+          var otherName = document.getElementById("otherbrowser-name");
+          if (otherName && otherBrowserMatch) {
+            otherName.textContent =
+              OTHER_BROWSER_LABELS[otherBrowserMatch[1] || ""] || "هذا المتصفح";
+          }
         } else if (!isAndroid) {
           show("card-desktop", true);
           show("card-android", false);
@@ -261,18 +317,20 @@
 
         // في المتصفح المدمج على أندرويد نستطيع تحويله إلى Chrome مباشرة عبر
         // رابط intent؛ على iOS لا يمكن فرض المتصفح فيبقى نسخ الرابط هو الحل.
-        var openChrome = document.getElementById("btn-open-chrome");
-        if (openChrome) {
+        var chromeIntent =
+          "intent://" +
+          location.host +
+          location.pathname +
+          "#Intent;scheme=https;package=com.android.chrome;end";
+        ["btn-open-chrome", "btn-open-chrome-2"].forEach(function (id) {
+          var openChrome = document.getElementById(id);
+          if (!openChrome) return;
           if (isAndroid) {
-            openChrome.href =
-              "intent://" +
-              location.host +
-              location.pathname +
-              "#Intent;scheme=https;package=com.android.chrome;end";
+            openChrome.href = chromeIntent;
           } else {
             openChrome.hidden = true;
           }
-        }
+        });
 
         function wireCopy(buttonId, doneId) {
           var button = document.getElementById(buttonId);
@@ -294,6 +352,7 @@
         }
         wireCopy("btn-copy-link", "copy-done");
         wireCopy("btn-copy-link-desktop", "copy-done-desktop");
+        wireCopy("btn-copy-link-other", "copy-done-other");
 
         // تثبيت مباشر (WebAPK) لمن يفتح الصفحة في Chrome على أندرويد: أيقونة
         // تطبيق حقيقية بدون تنزيل ملف APK نهائيًا — أضمن مسار لمن يفشل عنده APK.

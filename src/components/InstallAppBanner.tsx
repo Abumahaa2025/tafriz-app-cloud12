@@ -1,7 +1,8 @@
 import * as React from "react";
-import { Download, X, Share, Plus, MoreVertical } from "lucide-react";
+import { Download, X, Share, Plus, MoreVertical, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
+  chromeIntentUrl,
   InstallState,
   isIOSDevice,
   rememberPromptDismissed,
@@ -52,8 +53,9 @@ export function InstallAppBanner() {
           <div className="flex flex-1 flex-col gap-0.5 text-right">
             <p className="text-sm font-black text-foreground">ثبّت «الفرز» كتطبيق</p>
             <p className="text-[11px] leading-relaxed text-muted-foreground">
-              أنت تستعرضه الآن من المتصفح. التثبيت يعطيك أيقونة على الشاشة الرئيسية
-              تفتح بلا شريط عنوان، وبياناتك تبقى كما هي.
+              {state === "use-chrome"
+                ? "متصفحك الحالي يضيف اختصارًا يفتح داخل المتصفح، لا تطبيقًا. افتح الصفحة في Chrome وثبّت من هناك لتحصل على أيقونة تفتح بلا شريط عنوان."
+                : "أنت تستعرضه الآن من المتصفح. التثبيت يعطيك أيقونة على الشاشة الرئيسية تفتح بلا شريط عنوان، وبياناتك تبقى كما هي."}
             </p>
           </div>
           <button
@@ -66,7 +68,12 @@ export function InstallAppBanner() {
           </button>
         </div>
 
-        {state === "ready" ? (
+        {state === "use-chrome" ? (
+          <Button className="w-full" onClick={() => window.location.assign(chromeIntentUrl())}>
+            <ExternalLink className="h-4 w-4" />
+            افتح في Chrome
+          </Button>
+        ) : state === "ready" ? (
           <Button
             className="w-full"
             onClick={() => {
@@ -82,7 +89,7 @@ export function InstallAppBanner() {
           </Button>
         )}
 
-        {state !== "ready" && showSteps && (
+        {state === "manual" && showSteps && (
           <ol className="flex flex-col gap-1 rounded-xl bg-secondary/50 p-2 text-[11px] leading-relaxed text-muted-foreground">
             {ios ? (
               <>
