@@ -92,6 +92,10 @@
           وهذا المتصفح ينزّل الملف كمستند ولا يسلّمه لمثبّت التطبيقات — فيظهر لك
           «مستند» بدل تطبيق.
         </p>
+        <p class="note" id="inapp-intercepted" hidden>
+          أوقفنا التنزيل من هنا عن قصد: لو أكملته لوصلك «مستند» لا يُثبَّت. أكمل من
+          Chrome بالزر أدناه.
+        </p>
         <p>
           افتح هذه الصفحة في متصفح <strong id="inapp-browser">Chrome</strong> أولًا،
           ثم ثبّت من هناك.
@@ -189,13 +193,23 @@
       (function () {
         var ua = navigator.userAgent || "";
         var isAndroid = /Android/i.test(ua);
+
+        // وصل من تحويل السيرفر لرابط الحزمة المباشر: البيئة محدَّدة أصلًا من
+        // ترويسة الطلب، فلا نعتمد على استنتاج الواجهة وحده. هذا يغطّي من يُرسَل
+        // له رابط الملف مباشرة بدل رابط هذه الصفحة.
+        var src = (location.search.match(/[?&]src=([a-z]+)/i) || [])[1] || "";
+        var forcedInApp = src.toLowerCase() === "inapp";
+        var forcedIOS = src.toLowerCase() === "ios";
+
         var isIOS =
+          forcedIOS ||
           /iPhone|iPad|iPod/i.test(ua) ||
           (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
         // متصفحات مدمجة داخل تطبيقات أخرى: أندرويد يضع "; wv" في الـ UA، وبقية
         // العلامات لتطبيقات تستخدم متصفحًا مدمجًا بدون هذه العلامة.
         var isInAppBrowser =
+          forcedInApp ||
           /; wv\)/i.test(ua) ||
           /\bFBAN|\bFBAV|FB_IAB|Instagram|Line\/|MicroMessenger|Snapchat|TikTok|Twitter|WhatsApp|GSA\//i.test(ua);
 
@@ -225,6 +239,7 @@
           show("card-android", false);
           show("card-ios", isIOS);
           show("card-troubleshoot", !isIOS);
+          show("inapp-intercepted", forcedInApp);
           if (isIOS) {
             var browserName = document.getElementById("inapp-browser");
             if (browserName) browserName.textContent = "Safari";
