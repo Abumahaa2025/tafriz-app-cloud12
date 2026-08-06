@@ -44,6 +44,26 @@ export function isIOSDevice(): boolean {
   );
 }
 
+/**
+ * متصفح أندرويد غير Chrome (سامسونج، Mi، Opera…). موجّه التثبيت فيها ينتج
+ * اختصارًا يفتح داخل المتصفح لا تطبيقًا مستقلًا، وملف APK يُسلَّم لتطبيق مستندات
+ * بدل مثبّت الحِزم. فالتوجيه لـ Chrome أنفع من عرض تثبيت منقوص.
+ */
+export function isNonChromeAndroidBrowser(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent;
+  if (!/Android/i.test(ua)) return false;
+  return /SamsungBrowser|MiuiBrowser|HeyTapBrowser|OppoBrowser|VivoBrowser|HuaweiBrowser|UCBrowser|YaBrowser|OPR\//.test(
+    ua
+  );
+}
+
+/** يفتح نفس الصفحة في Chrome على أندرويد. */
+export function chromeIntentUrl(): string {
+  const { host, pathname } = window.location;
+  return `intent://${host}${pathname}#Intent;scheme=https;package=com.android.chrome;end`;
+}
+
 export function wasPromptDismissedRecently(): boolean {
   const at = loadLocal<number | null>(DISMISSED_KEY, null);
   if (!at) return false;
@@ -54,7 +74,7 @@ export function rememberPromptDismissed(): void {
   saveLocal(DISMISSED_KEY, Date.now());
 }
 
-export type InstallState = "unavailable" | "ready" | "manual";
+export type InstallState = "unavailable" | "ready" | "manual" | "use-chrome";
 
 /**
  * يراقب `beforeinstallprompt` ويرجع دالة تشغيل الموجّه.
@@ -70,6 +90,8 @@ export function watchInstallAvailability(
 
   const compute = () => {
     if (isRunningStandalone()) return onChange("unavailable");
+    // يُقدَّم على وجود الموجّه: سامسونج يوفّر موجّهًا لكنه ينتج اختصارًا لا تطبيقًا
+    if (isNonChromeAndroidBrowser()) return onChange("use-chrome");
     onChange(deferred ? "ready" : "manual");
   };
 

@@ -28,6 +28,18 @@
       ],
       "destination": "/install.html?src=ios",
       "permanent": false
+    },
+    {
+      "source": "/downloads/Tafriz.apk",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": ".*(SamsungBrowser|MiuiBrowser|HeyTapBrowser|OppoBrowser|VivoBrowser|HuaweiBrowser|UCBrowser|YaBrowser|OPR/).*"
+        }
+      ],
+      "destination": "/install.html?src=browser",
+      "permanent": false
     }
   ],
   "rewrites": [
