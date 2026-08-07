@@ -40,6 +40,7 @@ import {
   AppVoiceOverlay,
 } from "@/lib/app-voice";
 import { createSpeechPlateBuffer } from "@/lib/speech-plate";
+import { playSoftUiSound } from "@/lib/soft-ui-sound";
 import {
   loadFieldProfile,
   saveFieldProfile,
@@ -227,13 +228,18 @@ export default function RecordPage({
     }, ms);
   }
 
-  function stopListening() {
+  /** يعيد زر الأوامر الصوتية لوضعه الطبيعي بعد الأمر أو الإيقاف اليدوي */
+  function stopListening(reason: "manual" | "command" | "cleanup" = "manual") {
     speechRef.current?.stop();
     speechRef.current = null;
     plateBufRef.current.reset();
     if (plateCommitRef.current) clearTimeout(plateCommitRef.current);
     setListening(false);
     setInterim("");
+    // صوت انتهاء واحد فقط بعد الأمر أو الإيقاف اليدوي
+    if (reason === "command" || reason === "manual") {
+      playSoftUiSound("done");
+    }
   }
 
   function openOverlay(target: AppVoiceOverlay) {
@@ -253,14 +259,18 @@ export default function RecordPage({
   function commitPlateLookup(query: string) {
     if (!hasCheckFile || checkIndex.size === 0) {
       showNotice("ارفع ملف التشيك أولًا من تبويب التشيك");
+      stopListening("command");
       return;
     }
-    if (!query) return;
+    if (!query) {
+      stopListening("command");
+      return;
+    }
     const result = lookupPlateVoiceDetailed(checkIndex, query);
     if (result.status === "exact") {
       setFound(result.row);
       showNotice("وُجدت اللوحة");
-      stopListening();
+      stopListening("command");
       return;
     }
     if (result.status === "similar") {
@@ -269,10 +279,12 @@ export default function RecordPage({
         `لم يُعثر على الرقم المطلوب (${result.query})، وُجد رقم قريب الشبه: ${result.row.plate}`,
         5500
       );
-      stopListening();
+      stopListening("command");
       return;
     }
     showNotice("لم تُوجد مطابقة — أعد المحاولة بوضوح");
+    // بعد كل عملية أمر صوتي يعود الزر لوضعه الطبيعي
+    stopListening("command");
   }
 
   function handleTranscript(transcript: string, alternatives: string[]) {
@@ -286,29 +298,28 @@ export default function RecordPage({
 
       if (action.type === "help") {
         showNotice(appVoiceHelpText(), 5500);
-        stopListening();
+        stopListening("command");
         return;
       }
 
       if (action.type === "navigate_tab") {
         showNotice(`تم: ${action.label}`);
-        stopListening();
+        stopListening("command");
         onNavigateTab?.(action.tab);
         return;
       }
 
       if (action.type === "open_overlay") {
         const ok = openOverlay(action.target);
-        if (ok) {
-          showNotice(`تم: ${action.label}`);
-          stopListening();
-        }
+        if (ok) showNotice(`تم: ${action.label}`);
+        // سواء نجح أو رُفض — إنهاء الجلسة والعودة للوضع الطبيعي
+        stopListening("command");
         return;
       }
 
       if (action.type === "audio_record") {
         showNotice("بدء التسجيل الصوتي");
-        stopListening();
+        stopListening("command");
         void startRecording();
         return;
       }
@@ -325,6 +336,8 @@ export default function RecordPage({
         if (transcript.trim().length >= 2) {
           showNotice("حاول إدخال أحرف منفصلة أو رقم — أو قل: افتح الفرز / التشيك / الخرائط");
         }
+        // بعد محاولة الأمر غير المفهومة يعود الزر طبيعيًا
+        stopListening("command");
         return;
       }
       commitPlateLookup(q);
@@ -332,6 +345,8 @@ export default function RecordPage({
   }
 
   function startListening() {
+    // صوت ناعم واحد فور الضغط
+    playSoftUiSound("listen");
     setNotice(null);
     setFound(null);
     setLastHeard("");
@@ -344,8 +359,17 @@ export default function RecordPage({
     const handle = startAppVoice({
       onFinal: handleTranscript,
       onInterim: setInterim,
-      onError: (m) => showNotice(m, 4000),
-      onEnd: () => setListening(false),
+      onError: (m) => {
+        showNotice(m, 4000);
+        // خطأ → العودة للوضع الطبيعي بدون تكرار صوت الانتهاء
+        stopListening("cleanup");
+      },
+      onEnd: () => {
+        // انتهاء الجلسة من المحرك → زر الأوامر يعود لوضعه الطبيعي
+        setListening(false);
+        setInterim("");
+        speechRef.current = null;
+      },
     });
     if (!handle) return;
     speechRef.current = handle;
@@ -775,8 +799,16 @@ export default function RecordPage({
           size="lg"
           variant={listening ? "destructive" : "default"}
           className="w-full"
-          onClick={listening ? stopListening : startListening}
+          onClick={() => {
+            if (listening) {
+              stopListening("manual");
+              return;
+            }
+            startListening();
+          }}
           disabled={recording}
+          aria-pressed={listening}
+          aria-label={listening ? "إيقاف الأوامر الصوتية" : "ابدأ الأوامر الصوتية"}
         >
           {listening ? <Square className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
           {listening ? "إيقاف الأوامر" : "ابدأ الأوامر الصوتية"}
