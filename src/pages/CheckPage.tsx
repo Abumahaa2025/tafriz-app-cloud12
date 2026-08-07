@@ -28,6 +28,7 @@ import { idbGet, idbRemove, idbSet } from "@/lib/idb";
 import {
   buildCheckSheet,
   CHECK_IDB_KEY,
+  CHECK_PARSED_IDB_KEY,
   CheckSheetData,
   CheckSheetRow,
   guessCheckGpsColumn,
@@ -59,6 +60,7 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
   const [checking, setChecking] = React.useState(false);
   const [interim, setInterim] = React.useState("");
   const [speechError, setSpeechError] = React.useState<string | null>(null);
+  const [fileError, setFileError] = React.useState<string | null>(null);
   const [found, setFound] = React.useState<CheckSheetRow | null>(null);
   const [detailOpen, setDetailOpen] = React.useState(false);
   const [manualPlate, setManualPlate] = React.useState("");
@@ -66,13 +68,21 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
   const speechRef = React.useRef<{ stop: () => void } | null>(null);
 
   React.useEffect(() => {
-    idbGet<CheckSheetData>(CHECK_IDB_KEY).then((saved) => {
+    Promise.all([
+      idbGet<CheckSheetData>(CHECK_IDB_KEY),
+      idbGet<ParsedSheet>(CHECK_PARSED_IDB_KEY),
+    ]).then(([saved, parsed]) => {
       if (!saved?.rows?.length) return;
       setCheckData(saved);
       setCheckFile({ name: saved.fileName });
       setPlateColumn(saved.plateColumn);
       setGpsColumn(saved.gpsColumn || "");
       setIndex(indexCheckSheet(saved));
+      if (parsed?.headers?.length) {
+        setCheckSheet(parsed);
+      } else if (saved.headers?.length) {
+        setCheckSheet({ headers: saved.headers, rows: [] });
+      }
     });
     return () => {
       speechRef.current?.stop();
@@ -116,6 +126,7 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
     setCheckProgress(0);
     setCheckFile(file);
     setFound(null);
+    setFileError(null);
     try {
       const parsed = await parseSpreadsheet(file);
       setCheckSheet(parsed);
@@ -128,16 +139,17 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
       setCheckData(built);
       setIndex(indexCheckSheet(built));
       await idbSet(CHECK_IDB_KEY, built);
+      await idbSet(CHECK_PARSED_IDB_KEY, parsed);
       backend.saveUpload(file.name, parsed.headers, parsed.rows).catch(() => {});
       setCheckProgress(100);
     } catch (err) {
-      setSpeechError(err instanceof Error ? err.message : "تعذّر قراءة ملف التشيك");
+      setFileError(err instanceof Error ? err.message : "تعذّر قراءة ملف التشيك");
       setCheckProgress(null);
     }
   }
 
   function rebuildFromColumns(nextPlate: string, nextGps: string) {
-    if (!checkSheet || !checkFile) return;
+    if (!checkSheet?.rows?.length || !checkFile) return;
     const built = buildCheckSheet(checkSheet, checkFile.name, nextPlate, nextGps);
     setCheckData(built);
     setIndex(indexCheckSheet(built));
@@ -154,7 +166,9 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
     setGpsColumn("");
     setCheckProgress(null);
     setFound(null);
+    setFileError(null);
     idbRemove(CHECK_IDB_KEY).catch(() => {});
+    idbRemove(CHECK_PARSED_IDB_KEY).catch(() => {});
   }
 
   function tryLookup(raw: string, voice = false): "exact" | "similar" | false {
@@ -285,11 +299,15 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
         <CardContent className="flex flex-col gap-3">
           <FileDropCard
             label="ارفع ملف التشيك"
+            hint="يفتح مستندات الجهاز — ملف Excel أو CSV (بدون كاميرا أو صور)"
             file={checkFile}
             progress={checkProgress}
             onSelect={handleCheckFile}
             onClear={clearCheckFile}
           />
+          {fileError && (
+            <p className="text-center text-xs font-bold text-destructive">{fileError}</p>
+          )}
           {checkData && (
             <>
               <div className="grid grid-cols-2 gap-2">
@@ -433,6 +451,13 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
           {checking ? "إيقاف التشيك" : "ابدأ التشيك"}
         </Button>
       </div>
+
+      {!isSpeechRecognitionSupported() && (
+        <p className="text-center text-[11px] text-muted-foreground">
+          التعرف الصوتي غير متاح في هذا المتصفح — استخدم الإدخال اليدوي، أو الأوامر الصوتية من تبويب
+          «التسجيل» عبر Chrome.
+        </p>
+      )}
 
       {checking && (
         <p className="text-center text-xs text-muted-foreground">

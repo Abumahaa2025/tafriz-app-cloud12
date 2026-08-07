@@ -16,6 +16,22 @@ export function extractMapsUrl(raw: string): string | null {
 }
 
 /**
+ * يقرأ إحداثيات خام من نص مثل «24.7136, 46.6753» أو «24.7136 46.6753».
+ * يُستخدم عندما يكون عمود الخريطة GPS وليس رابط Maps.
+ */
+export function coordsFromText(raw: string): LatLng | null {
+  const s = String(raw ?? "").trim();
+  if (!s || /https?:\/\//i.test(s) || /maps\.|goo\.gl/i.test(s)) return null;
+  const m = s.match(/(-?\d{1,3}\.\d{2,})\s*[,;\s]\s*(-?\d{1,3}\.\d{2,})/);
+  if (!m) return null;
+  const lat = Number(m[1]);
+  const lng = Number(m[2]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  return { lat, lng };
+}
+
+/**
  * يحاول قراءة إحداثيات من رابط Google Maps كامل.
  * الروابط المختصرة (goo.gl) غالبًا بلا إحداثيات ظاهرة — تُفتح في Google Maps مباشرة.
  */

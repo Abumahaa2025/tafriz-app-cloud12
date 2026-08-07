@@ -20,7 +20,7 @@ import { idbGet, idbRemove, idbSet } from "@/lib/idb";
 import { consumeSharedFile } from "@/lib/shared-file";
 import { listenForNativeSharedFile } from "@/lib/native-import";
 import { backend } from "@/lib/backend";
-import { spreadsheetAcceptForDevice, pickSpreadsheetFile } from "@/lib/pick-spreadsheet";
+import { pickSpreadsheetDetailed } from "@/lib/pick-spreadsheet";
 import { useAuth } from "@/context/AuthContext";
 import {
   loadSortLibrary,
@@ -138,7 +138,6 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
   const [library, setLibrary] = React.useState<SortLibraryFile[]>([]);
   const [pasteText, setPasteText] = React.useState("");
   const [pasteOpen, setPasteOpen] = React.useState(false);
-  const appendInputRef = React.useRef<HTMLInputElement | null>(null);
   const appendTargetId = React.useRef<string | null>(null);
 
 
@@ -361,8 +360,8 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
 
   function requestAppend(id: string) {
     appendTargetId.current = id;
-    void pickSpreadsheetFile().then((f) => {
-      if (f) void handleAppendFile(f);
+    void pickSpreadsheetDetailed().then((result) => {
+      if (result.status === "picked") void handleAppendFile(result.file);
       else appendTargetId.current = null;
     });
   }
@@ -677,18 +676,6 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
               setDataFile(null);
               setDataSheet(null);
               setDataProgress(null);
-            }}
-          />
-
-          <input
-            ref={appendInputRef}
-            type="file"
-            accept={spreadsheetAcceptForDevice()}
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) void handleAppendFile(f);
-              e.target.value = "";
             }}
           />
 
