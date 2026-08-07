@@ -124,12 +124,28 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
   }
 }
 
+function SentryTestButton() {
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        Sentry.captureException(new Error("Sentry Test Success!"));
+      }}
+      className="fixed bottom-20 left-3 z-40 rounded-lg border border-border bg-background/95 px-2.5 py-1.5 text-[11px] font-bold text-muted-foreground shadow-sm backdrop-blur hover:text-foreground"
+      title="إرسال حدث اختبار إلى Sentry"
+    >
+      اختبار Sentry
+    </button>
+  );
+}
+
 export default function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
         <RefreshAppButton />
         <ThemeToggle />
+        <SentryTestButton />
         <Gate />
         <InstallAppBanner />
       </AuthProvider>
