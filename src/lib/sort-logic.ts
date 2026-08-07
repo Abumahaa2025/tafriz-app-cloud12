@@ -1,6 +1,28 @@
 import { normalizePlate } from "./normalize";
 import { ParsedSheet } from "./xlsx-utils";
-import { coordsFromMapsUrl, findMapsUrlInRow } from "./map-coords";
+import { coordsFromMapsUrl, coordsFromText, findMapsUrlInRow } from "./map-coords";
+
+function coordsForRow(
+  row: Record<string, string | number>,
+  dataMapColumn?: string
+): { mapUrl: string | null; lat: number | null; lng: number | null } {
+  const mapUrl = findMapsUrlInRow(row, dataMapColumn);
+  let coords = mapUrl ? coordsFromMapsUrl(mapUrl) : null;
+  if (!coords && dataMapColumn) {
+    coords = coordsFromText(String(row[dataMapColumn] ?? ""));
+  }
+  if (!coords) {
+    for (const value of Object.values(row)) {
+      coords = coordsFromText(String(value ?? ""));
+      if (coords) break;
+    }
+  }
+  return {
+    mapUrl,
+    lat: coords?.lat ?? null,
+    lng: coords?.lng ?? null,
+  };
+}
 
 export interface SortResultRow {
   street: string;
@@ -54,14 +76,13 @@ export function runSort(
 
     if (plateNorm.length > 0 && referralPlates.has(plateNorm)) {
       if (exclude?.has(plateNorm)) continue;
-      const mapUrl = findMapsUrlInRow(row, dataMapColumn);
-      const coords = mapUrl ? coordsFromMapsUrl(mapUrl) : null;
+      const loc = coordsForRow(row, dataMapColumn);
       matchedRows.push({
         street,
         plate: plateRaw,
-        mapUrl,
-        lat: coords?.lat ?? null,
-        lng: coords?.lng ?? null,
+        mapUrl: loc.mapUrl,
+        lat: loc.lat,
+        lng: loc.lng,
       });
       distinctMatched.add(plateNorm);
     } else {
@@ -109,14 +130,13 @@ export async function runSortChunked(
 
       if (plateNorm.length > 0 && referralPlates.has(plateNorm)) {
         if (exclude?.has(plateNorm)) continue;
-        const mapUrl = findMapsUrlInRow(row, dataMapColumn);
-        const coords = mapUrl ? coordsFromMapsUrl(mapUrl) : null;
+        const loc = coordsForRow(row, dataMapColumn);
         matchedRows.push({
           street,
           plate: plateRaw,
-          mapUrl,
-          lat: coords?.lat ?? null,
-          lng: coords?.lng ?? null,
+          mapUrl: loc.mapUrl,
+          lat: loc.lat,
+          lng: loc.lng,
         });
         distinctMatched.add(plateNorm);
       } else {

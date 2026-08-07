@@ -1,7 +1,10 @@
 /**
  * منتقي جداول Excel/CSV لأندرويد وChrome.
- * على أندرويد: accept بالامتدادات فقط — قوائم MIME الطويلة تفتح
- * «اختيار إجراء: كاميرا / صور» بدل المستندات على أجهزة كثيرة (سامسونج وغيرها).
+ *
+ * على أندرويد/سامسونج:
+ * - بدون accept → Intent عام يفتح «اختيار إجراء: كاميرا / صور»
+ * - MIME عريض مثل application/* → نفس المشكلة أو أسوأ
+ * - امتدادات فقط (.xlsx,.xls,…) → يفضّل مستندات/ملفات على أغلب الأجهزة
  */
 
 const SPREADSHEET_EXT = /\.(xlsx|xls|xlsb|csv|ods)$/i;
@@ -28,7 +31,6 @@ export function isMobileFilePicker(): boolean {
   if (/Android|iPhone|iPad|iPod|Mobile|webOS|BlackBerry|IEMobile|Opera Mini/i.test(ua)) {
     return true;
   }
-  // كروم أندرويد أحيانًا بدون كلمة Mobile في UA
   if (/Android/i.test(ua)) return true;
   return false;
 }
@@ -59,11 +61,21 @@ type FilePickerWindow = Window & {
   }) => Promise<{ getFile: () => Promise<File> }[]>;
 };
 
+export type SpreadsheetPickResult =
+  | { status: "picked"; file: File }
+  | { status: "cancel" }
+  | { status: "rejected" };
+
 /**
- * يفتح منتقي مستندات Excel/CSV (بدون كاميرا/معرض).
+ * يفتح منتقي مستندات Excel/CSV (بدون كاميرا/معرض قدر الإمكان).
  * يجب استدعاؤه مباشرة من onClick (إيماءة المستخدم).
  */
 export function pickSpreadsheetFile(): Promise<File | null> {
+  return pickSpreadsheetDetailed().then((r) => (r.status === "picked" ? r.file : null));
+}
+
+/** نفس المنتقي مع تمييز الإلغاء عن ملف مرفوض */
+export function pickSpreadsheetDetailed(): Promise<SpreadsheetPickResult> {
   return new Promise((resolve) => {
     const mobile = isMobileFilePicker();
     const win = window as FilePickerWindow;
@@ -87,11 +99,11 @@ export function pickSpreadsheetFile(): Promise<File | null> {
         })
         .then(async ([handle]) => {
           const file = await handle.getFile();
-          resolve(isSpreadsheetFile(file) ? file : null);
+          resolve(isSpreadsheetFile(file) ? { status: "picked", file } : { status: "rejected" });
         })
         .catch((err: unknown) => {
           if (err instanceof Error && err.name === "AbortError") {
-            resolve(null);
+            resolve({ status: "cancel" });
             return;
           }
           openDocumentInput(resolve);
@@ -103,21 +115,19 @@ export function pickSpreadsheetFile(): Promise<File | null> {
   });
 }
 
-function openDocumentInput(resolve: (file: File | null) => void) {
+function openDocumentInput(resolve: (result: SpreadsheetPickResult) => void) {
   const input = document.createElement("input");
   input.type = "file";
   input.multiple = false;
 
-  // أندرويد: بدون accept لمنع Intent الكاميرا/المعرض على أجهزة OEM
-  if (!isMobileFilePicker()) {
-    const accept = spreadsheetAcceptForDevice();
-    input.setAttribute("accept", accept);
-    input.accept = accept;
-  }
+  // امتدادات على الجوال — بدون MIME عريض وبدون ترك الحقل فارغًا (يفتح الكاميرا على سامسونج)
+  const accept = spreadsheetAcceptForDevice();
+  input.setAttribute("accept", accept);
+  input.accept = accept;
   input.removeAttribute("capture");
 
   let settled = false;
-  const finish = (file: File | null) => {
+  const finish = (result: SpreadsheetPickResult) => {
     if (settled) return;
     settled = true;
     window.removeEventListener("focus", onFocusCheck);
@@ -126,29 +136,29 @@ function openDocumentInput(resolve: (file: File | null) => void) {
     } catch {
       /* ignore */
     }
-    resolve(file);
+    resolve(result);
   };
 
   input.onchange = () => {
     const file = input.files?.[0] ?? null;
     if (!file) {
-      finish(null);
+      finish({ status: "cancel" });
       return;
     }
-    finish(isSpreadsheetFile(file) ? file : null);
+    finish(isSpreadsheetFile(file) ? { status: "picked", file } : { status: "rejected" });
   };
 
-  input.addEventListener("cancel", () => finish(null), { once: true });
+  input.addEventListener("cancel", () => finish({ status: "cancel" }), { once: true });
 
   const onFocusCheck = () => {
     window.setTimeout(() => {
-      if (!settled && !input.files?.length) finish(null);
+      if (!settled && !input.files?.length) finish({ status: "cancel" });
     }, 400);
   };
   window.addEventListener("focus", onFocusCheck, { once: true });
 
   input.style.cssText =
-    "position:fixed;inset:0;width:100%;height:100%;opacity:0.001;z-index:2147483647;pointer-events:none;";
+    "position:fixed;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;";
   document.body.appendChild(input);
   input.click();
 }

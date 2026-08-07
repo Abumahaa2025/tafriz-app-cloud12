@@ -2,7 +2,7 @@ import * as React from "react";
 import { Download, Upload, MessageCircle } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { nativeShareText } from "@/lib/native-share";
-import { isMobileFilePicker, isSpreadsheetFile, spreadsheetAcceptForDevice } from "@/lib/pick-spreadsheet";
+import { pickSpreadsheetDetailed } from "@/lib/pick-spreadsheet";
 import { cn } from "@/lib/utils";
 
 interface ImportExportBarProps {
@@ -23,13 +23,27 @@ export function ImportExportBar({
   buildExportText,
   exportFileName = "نتائج-الفرز.txt",
 }: ImportExportBarProps) {
-  const importId = React.useId();
   const [status, setStatus] = React.useState<string | null>(null);
-  const mobile = isMobileFilePicker();
+  const [picking, setPicking] = React.useState(false);
 
   function flashStatus(msg: string) {
     setStatus(msg);
     setTimeout(() => setStatus(null), 2500);
+  }
+
+  async function handleImportClick() {
+    if (picking) return;
+    setPicking(true);
+    try {
+      const result = await pickSpreadsheetDetailed();
+      if (result.status === "rejected") {
+        flashStatus("اختر ملف Excel أو CSV من الملفات — وليس الكاميرا");
+        return;
+      }
+      if (result.status === "picked") onImport(result.file);
+    } finally {
+      setPicking(false);
+    }
   }
 
   async function handleExport() {
@@ -72,35 +86,19 @@ export function ImportExportBar({
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
   }
 
-  function onImportChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
-    e.target.value = "";
-    if (!f) return;
-    if (!isSpreadsheetFile(f)) {
-      flashStatus("اختر ملف Excel أو CSV من الملفات — وليس الكاميرا");
-      return;
-    }
-    onImport(f);
-  }
-
   return (
     <div className="flex flex-col gap-1">
       <div className="flex gap-2">
-        <label
-          htmlFor={importId}
-          className={cn(buttonVariants({ variant: "secondary" }), "flex-1 cursor-pointer")}
+        <button
+          type="button"
+          disabled={picking}
+          onClick={() => void handleImportClick()}
+          className={cn(buttonVariants({ variant: "secondary" }), "flex-1")}
         >
-          <input
-            id={importId}
-            type="file"
-            {...(mobile ? {} : { accept: spreadsheetAcceptForDevice() })}
-            className="sr-only"
-            onChange={onImportChange}
-          />
           <Upload className="h-4 w-4" />
-          استيراد
-        </label>
-        <Button variant="secondary" className="flex-1" onClick={handleExport}>
+          {picking ? "جارٍ..." : "استيراد"}
+        </button>
+        <Button variant="secondary" className="flex-1" onClick={() => void handleExport()}>
           <Download className="h-4 w-4" />
           تصدير
         </Button>

@@ -1,5 +1,5 @@
 import { normalizePlate } from "./normalize";
-import { extractMapsUrl, findMapsUrlInRow } from "./map-coords";
+import { coordsFromText, extractMapsUrl, findMapsUrlInRow } from "./map-coords";
 import { extractPlateLetters, normalizeSearchText } from "./search-text";
 import { ParsedSheet } from "./xlsx-utils";
 
@@ -16,9 +16,13 @@ export interface CheckSheetData {
   plateColumn: string;
   gpsColumn: string;
   rows: CheckSheetRow[];
+  /** تُحفظ لاستعادة قائمة الأعمدة بعد إعادة فتح الصفحة */
+  headers?: string[];
 }
 
 export const CHECK_IDB_KEY = "check_sheet_v1";
+/** ورقة خام لإعادة بناء الأعمدة بعد الاستعادة */
+export const CHECK_PARSED_IDB_KEY = "check_parsed_sheet_v1";
 
 export function guessCheckPlateColumn(headers: string[]): string {
   const keys = ["لوحة", "اللوحه", "اللوحة", "plate"];
@@ -52,11 +56,15 @@ export function buildCheckSheet(
     const gpsRaw = gpsColumn ? String(raw[gpsColumn] ?? "").trim() : "";
     const mapUrl =
       extractMapsUrl(gpsRaw) || findMapsUrlInRow(raw, gpsColumn || undefined) || null;
+    const bare = !mapUrl ? coordsFromText(gpsRaw) : null;
+    const resolvedMap =
+      mapUrl ||
+      (bare ? `https://www.google.com/maps?q=${bare.lat},${bare.lng}` : null);
     rows.push({
       plate,
       plateNorm,
-      gps: gpsRaw || mapUrl || "",
-      mapUrl,
+      gps: gpsRaw || resolvedMap || "",
+      mapUrl: resolvedMap,
     });
   }
   return {
@@ -65,6 +73,7 @@ export function buildCheckSheet(
     plateColumn,
     gpsColumn,
     rows,
+    headers: sheet.headers,
   };
 }
 

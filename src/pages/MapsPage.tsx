@@ -120,7 +120,8 @@ export default function MapsPage({ onBack }: { onBack?: () => void }) {
       ];
     }
     return fleetPoints.map((r, i) => ({
-      id: `${r.plate}-${i}`,
+      // فهرس ثابت — لا نستخدم plate في الـ id لأن بعض اللوحات فيها "-" فتُقطع خطأ
+      id: `fleet-${i}`,
       lat: r.lat,
       lng: r.lng,
       label: r.plate,
@@ -185,9 +186,12 @@ export default function MapsPage({ onBack }: { onBack?: () => void }) {
             focus={focusPoint}
             onSelect={(id) => {
               if (id === "me") return;
-              const plate = id.split("-")[0];
-              setSelectedPlate(plate);
-              setMode("fleet");
+              const idx = Number(String(id).replace(/^fleet-/, ""));
+              const row = Number.isFinite(idx) ? fleetPoints[idx] : null;
+              if (row) {
+                setSelectedPlate(row.plate);
+                setMode("fleet");
+              }
             }}
           />
         </div>

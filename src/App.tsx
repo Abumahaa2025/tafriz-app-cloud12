@@ -27,8 +27,17 @@ function MainApp() {
   const [overlay, setOverlay] = React.useState<OverlayPage>(null);
 
   React.useEffect(() => {
-    if (overlay === "home") setOverlay(null);
+    // «الصفحة الرئيسية» من القائمة/الصوت → تبويب الفرز دائمًا
+    if (overlay === "home") {
+      setOverlay(null);
+      setTab("sort");
+    }
   }, [overlay]);
+
+  React.useEffect(() => {
+    // أمان: لا تُترك شاشة إدارة فارغة لمستخدم غير مالك
+    if (overlay === "admin" && !user?.isOwner) setOverlay(null);
+  }, [overlay, user?.isOwner]);
 
   return (
     <div className="min-h-screen bg-background">
