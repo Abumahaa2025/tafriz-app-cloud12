@@ -38,6 +38,7 @@ import {
   lookupPlateVoiceDetailed,
 } from "@/lib/check-engine";
 import { isSpeechRecognitionSupported, startPlateSpeech } from "@/lib/speech-plate";
+import { playSoftUiSound } from "@/lib/soft-ui-sound";
 
 interface ChecklistItem {
   id: string;
@@ -157,7 +158,7 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
   }
 
   function clearCheckFile() {
-    stopChecking();
+    returnToReady();
     setCheckFile(null);
     setCheckSheet(null);
     setCheckData(null);
@@ -208,14 +209,18 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
     setDetailOpen(false);
   }
 
-  function returnToReady() {
+  /** يعيد زر التشيك لوضعه الطبيعي بعد كل عملية صوتية */
+  function returnToReady(opts?: { playDone?: boolean }) {
     speechRef.current?.stop();
     speechRef.current = null;
     setChecking(false);
     setInterim("");
+    if (opts?.playDone) playSoftUiSound("done");
   }
 
   function startChecking() {
+    // صوت ناعم واحد عند ضغط زر التشيك
+    playSoftUiSound("listen");
     setSpeechError(null);
     setFound(null);
     setDetailOpen(false);
@@ -236,6 +241,8 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
           const outcome = tryLookup(c, true);
           if (outcome === "exact" || outcome === "similar") {
             setInterim("");
+            // بعد كل عملية تشيك صوتية يعود الزر طبيعيًا مع صوت انتهاء واحد
+            returnToReady({ playDone: true });
             return;
           }
         }
@@ -244,6 +251,8 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
           setSpeechError(tip);
           window.setTimeout(() => setSpeechError((prev) => (prev === tip ? null : prev)), 3500);
         }
+        // انتهت محاولة الأمر → الوضع الطبيعي
+        returnToReady({ playDone: true });
       },
       onInterim: setInterim,
       onError: (msg) => {
@@ -262,7 +271,7 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
   }
 
   function stopChecking() {
-    returnToReady();
+    returnToReady({ playDone: true });
   }
 
   function exportHits() {

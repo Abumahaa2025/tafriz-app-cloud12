@@ -182,7 +182,8 @@ export default function RecordPage({
     if (plateCommitRef.current) clearTimeout(plateCommitRef.current);
     setListening(false);
     setInterim("");
-    if (reason === "command") {
+    // صوت انتهاء واحد فقط بعد الأمر أو الإيقاف اليدوي
+    if (reason === "command" || reason === "manual") {
       playSoftUiSound("done");
     }
   }
@@ -204,9 +205,13 @@ export default function RecordPage({
   function commitPlateLookup(query: string) {
     if (!hasCheckFile || checkIndex.size === 0) {
       showNotice("ارفع ملف التشيك أولًا من تبويب التشيك");
+      stopListening("command");
       return;
     }
-    if (!query) return;
+    if (!query) {
+      stopListening("command");
+      return;
+    }
     const result = lookupPlateVoiceDetailed(checkIndex, query);
     if (result.status === "exact") {
       setFound(result.row);
@@ -224,6 +229,8 @@ export default function RecordPage({
       return;
     }
     showNotice("لم تُوجد مطابقة — أعد المحاولة بوضوح");
+    // بعد كل عملية أمر صوتي يعود الزر لوضعه الطبيعي
+    stopListening("command");
   }
 
   function handleTranscript(transcript: string, alternatives: string[]) {
@@ -250,10 +257,9 @@ export default function RecordPage({
 
       if (action.type === "open_overlay") {
         const ok = openOverlay(action.target);
-        if (ok) {
-          showNotice(`تم: ${action.label}`);
-          stopListening("command");
-        }
+        if (ok) showNotice(`تم: ${action.label}`);
+        // سواء نجح أو رُفض — إنهاء الجلسة والعودة للوضع الطبيعي
+        stopListening("command");
         return;
       }
 
@@ -276,6 +282,8 @@ export default function RecordPage({
         if (transcript.trim().length >= 2) {
           showNotice("حاول إدخال أحرف منفصلة أو رقم — أو قل: افتح الفرز / التشيك / الخرائط");
         }
+        // بعد محاولة الأمر غير المفهومة يعود الزر طبيعيًا
+        stopListening("command");
         return;
       }
       commitPlateLookup(q);
@@ -283,7 +291,7 @@ export default function RecordPage({
   }
 
   function startListening() {
-    // صوت ناعم فور الضغط — قبل بدء الاستماع
+    // صوت ناعم واحد فور الضغط
     playSoftUiSound("listen");
     setNotice(null);
     setFound(null);
@@ -299,7 +307,7 @@ export default function RecordPage({
       onInterim: setInterim,
       onError: (m) => {
         showNotice(m, 4000);
-        // أي خطأ يمنع الاستمرار → العودة للوضع الطبيعي
+        // خطأ → العودة للوضع الطبيعي بدون تكرار صوت الانتهاء
         stopListening("cleanup");
       },
       onEnd: () => {
@@ -725,12 +733,9 @@ export default function RecordPage({
           className="w-full"
           onClick={() => {
             if (listening) {
-              // ضغط الإيقاف: صوت ناعم ثم العودة للوضع الطبيعي
-              playSoftUiSound("done");
               stopListening("manual");
               return;
             }
-            // ضغط البدء: صوت ناعم داخل startListening
             startListening();
           }}
           disabled={recording}
