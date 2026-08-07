@@ -1,31 +1,15 @@
 import * as React from "react";
-import {
-  BarChart3,
-  FileText,
-  Eraser,
-  Share2,
-  Copy,
-  ListChecks,
-  ChevronDown,
-  ScanLine,
-  Download,
-  Trash2,
-  ArrowUpFromLine,
-  ClipboardPaste,
-  FileSpreadsheet,
-  X,
-  Upload,
-  MessageCircle,
-} from "lucide-react";
+import { BarChart3, FileText, Eraser, Share2, Copy, ListChecks, ChevronDown, ScanLine, Download, Trash2, ArrowUpFromLine, ClipboardPaste } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Progress } from "@/components/ui/progress";
+import { FileDropCard } from "@/components/FileDropCard";
 import { SegmentedToggle } from "@/components/SegmentedToggle";
 import { SortSummaryCard } from "@/components/SortSummaryCard";
 import { PercentStepper } from "@/components/PercentStepper";
 import { StatPill } from "@/components/StatPill";
 import { ResultsTable } from "@/components/ResultsTable";
+import { ImportExportBar } from "@/components/ImportExportBar";
 import { AppMenu, MenuTarget } from "@/components/AppMenu";
 import * as XLSX from "xlsx";
 import { Capacitor } from "@capacitor/core";
@@ -36,9 +20,7 @@ import { idbGet, idbRemove, idbSet } from "@/lib/idb";
 import { consumeSharedFile } from "@/lib/shared-file";
 import { listenForNativeSharedFile } from "@/lib/native-import";
 import { backend } from "@/lib/backend";
-import { isMobileFilePicker, isSpreadsheetFile } from "@/lib/pick-spreadsheet";
-import { nativeShareText } from "@/lib/native-share";
-import { cn } from "@/lib/utils";
+import { spreadsheetAcceptForDevice, pickSpreadsheetFile } from "@/lib/pick-spreadsheet";
 import { useAuth } from "@/context/AuthContext";
 import {
   loadSortLibrary,
@@ -50,77 +32,6 @@ import {
   totalPlateEstimate,
   type SortLibraryFile,
 } from "@/lib/sort-file-library";
-
-/**
- * منتقي مستندات خاص بشاشة الفرز فقط.
- * على أندرويد/سامسونج: accept بمستندات (application/* + Excel) يمنع
- * قائمة «اختيار إجراء: كاميرا / صور» التي تظهر مع input بلا نوع أو image/*.
- */
-const SORT_DOC_ACCEPT_MOBILE =
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet," +
-  "application/vnd.ms-excel," +
-  "application/vnd.oasis.opendocument.spreadsheet," +
-  "application/*," +
-  "text/csv,text/comma-separated-values,text/plain," +
-  ".xlsx,.xls,.xlsb,.csv,.ods";
-
-const SORT_DOC_ACCEPT_DESKTOP =
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet," +
-  "application/vnd.ms-excel," +
-  "text/csv," +
-  ".xlsx,.xls,.xlsb,.csv,.ods";
-
-type SortPickResult =
-  | { status: "picked"; file: File }
-  | { status: "cancel" }
-  | { status: "rejected" };
-
-function pickSortDocumentFile(): Promise<SortPickResult> {
-  return new Promise((resolve) => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.multiple = false;
-    const accept = isMobileFilePicker() ? SORT_DOC_ACCEPT_MOBILE : SORT_DOC_ACCEPT_DESKTOP;
-    input.setAttribute("accept", accept);
-    input.accept = accept;
-    input.removeAttribute("capture");
-
-    let settled = false;
-    const finish = (result: SortPickResult) => {
-      if (settled) return;
-      settled = true;
-      window.removeEventListener("focus", onFocusCheck);
-      try {
-        input.remove();
-      } catch {
-        /* ignore */
-      }
-      resolve(result);
-    };
-
-    input.onchange = () => {
-      const file = input.files?.[0] ?? null;
-      if (!file) {
-        finish({ status: "cancel" });
-        return;
-      }
-      finish(isSpreadsheetFile(file) ? { status: "picked", file } : { status: "rejected" });
-    };
-    input.addEventListener("cancel", () => finish({ status: "cancel" }), { once: true });
-
-    const onFocusCheck = () => {
-      window.setTimeout(() => {
-        if (!settled && !input.files?.length) finish({ status: "cancel" });
-      }, 400);
-    };
-    window.addEventListener("focus", onFocusCheck, { once: true });
-
-    input.style.cssText =
-      "position:fixed;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;";
-    document.body.appendChild(input);
-    input.click();
-  });
-}
 
 const SORT_DATA_IDB = "sort_data_sheet_v1";
 const SORT_REFERRAL_IDB = "sort_referral_sheet_v1";
@@ -227,6 +138,7 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
   const [library, setLibrary] = React.useState<SortLibraryFile[]>([]);
   const [pasteText, setPasteText] = React.useState("");
   const [pasteOpen, setPasteOpen] = React.useState(false);
+  const appendInputRef = React.useRef<HTMLInputElement | null>(null);
   const appendTargetId = React.useRef<string | null>(null);
 
 
@@ -449,8 +361,8 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
 
   function requestAppend(id: string) {
     appendTargetId.current = id;
-    void pickSortDocumentFile().then((result) => {
-      if (result.status === "picked") void handleAppendFile(result.file);
+    void pickSpreadsheetFile().then((f) => {
+      if (f) void handleAppendFile(f);
       else appendTargetId.current = null;
     });
   }
@@ -723,7 +635,7 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
         isOwner={user?.isOwner}
       />
 
-      <SortImportExportBar
+      <ImportExportBar
         onImport={handleDataSelect}
         buildExportText={() =>
           (result?.matchedRows ?? [])
@@ -755,7 +667,7 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
           <CardTitle>الداتا</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          <SortExcelDrop
+          <FileDropCard
             label="استيراد ملف الداتا (Excel)"
             hint="يفتح مستندات الجهاز (التنزيلات، الملفات، Drive، واتساب) — بدون كاميرا أو صور"
             file={dataFile}
@@ -765,6 +677,18 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
               setDataFile(null);
               setDataSheet(null);
               setDataProgress(null);
+            }}
+          />
+
+          <input
+            ref={appendInputRef}
+            type="file"
+            accept={spreadsheetAcceptForDevice()}
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void handleAppendFile(f);
+              e.target.value = "";
             }}
           />
 
@@ -874,7 +798,7 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {/* استيراد Excel أولًا — أوضح للمستخدم من اللصق النصي */}
-          <SortExcelDrop
+          <FileDropCard
             label="استيراد ملف إحالة Excel"
             hint="اختر ملف .xlsx أو .xls أو .csv من مستندات الجهاز — بدون كاميرا"
             file={referralFile}
@@ -992,208 +916,6 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
           </Button>
         </div>
       </div>
-    </div>
-  );
-}
-
-/** منطقة استيراد Excel لشاشة الفرز — زر onClick يفتح مستندات لا كاميرا */
-function SortExcelDrop({
-  label,
-  hint,
-  file,
-  progress,
-  onSelect,
-  onClear,
-}: {
-  label: string;
-  hint?: string;
-  file: File | { name: string } | null;
-  progress: number | null;
-  onSelect: (file: File) => void;
-  onClear: () => void;
-}) {
-  const [picking, setPicking] = React.useState(false);
-  const [pickError, setPickError] = React.useState<string | null>(null);
-
-  async function openPicker() {
-    if (picking) return;
-    setPickError(null);
-    setPicking(true);
-    try {
-      const result = await pickSortDocumentFile();
-      if (result.status === "rejected") {
-        setPickError("اختر ملف Excel أو CSV من الملفات — وليس الكاميرا أو الصور");
-        return;
-      }
-      if (result.status === "picked") onSelect(result.file);
-    } finally {
-      setPicking(false);
-    }
-  }
-
-  return (
-    <div>
-      {!file ? (
-        <button
-          type="button"
-          onClick={() => void openPicker()}
-          disabled={picking}
-          className={cn(
-            "flex w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-border bg-muted/40 py-8 text-muted-foreground transition-colors hover:border-primary hover:bg-secondary/40 disabled:opacity-60"
-          )}
-        >
-          <FileSpreadsheet className="h-7 w-7 text-primary" />
-          <span className="text-sm font-bold">{picking ? "جارٍ فتح الملفات..." : label}</span>
-          <span className="px-4 text-center text-[11px] leading-4">
-            {hint ?? "ملف Excel من الملفات / التنزيلات / Drive"}
-          </span>
-        </button>
-      ) : (
-        <div className="flex items-center justify-between rounded-xl border border-primary/30 bg-secondary/40 px-4 py-3">
-          <button
-            type="button"
-            onClick={onClear}
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:text-destructive"
-            aria-label="إزالة الملف"
-          >
-            <X className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => void openPicker()}
-            className="flex min-w-0 flex-1 flex-col items-end gap-0.5 text-right"
-          >
-            <span className="w-full truncate text-sm font-bold">{file.name}</span>
-            <span className="text-xs text-muted-foreground">اضغط لاختيار ملف Excel آخر</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => void openPicker()}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background"
-            aria-label="اختيار ملف"
-          >
-            <FileSpreadsheet className="h-5 w-5 text-primary" />
-          </button>
-        </div>
-      )}
-
-      {pickError && (
-        <p className="mt-1 text-center text-[11px] text-amber-700 dark:text-amber-300">{pickError}</p>
-      )}
-
-      {progress !== null && (
-        <div className="mt-2 flex items-center gap-3">
-          <span className="w-12 shrink-0 text-xs text-muted-foreground">
-            {progress < 100 ? "يرفع..." : "تم"}
-          </span>
-          <Progress value={progress} className="flex-1" />
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** شريط استيراد/تصدير لشاشة الفرز — نفس الشكل، مع منتقي مستندات بدون كاميرا */
-function SortImportExportBar({
-  onImport,
-  buildExportText,
-  exportFileName = "نتائج-الفرز.txt",
-}: {
-  onImport: (file: File) => void;
-  buildExportText: () => string;
-  exportFileName?: string;
-}) {
-  const [status, setStatus] = React.useState<string | null>(null);
-  const [picking, setPicking] = React.useState(false);
-
-  function flashStatus(msg: string) {
-    setStatus(msg);
-    setTimeout(() => setStatus(null), 2500);
-  }
-
-  async function handleImportClick() {
-    if (picking) return;
-    setPicking(true);
-    try {
-      const result = await pickSortDocumentFile();
-      if (result.status === "rejected") {
-        flashStatus("اختر ملف Excel أو CSV من الملفات — وليس الكاميرا");
-        return;
-      }
-      if (result.status === "picked") onImport(result.file);
-    } finally {
-      setPicking(false);
-    }
-  }
-
-  async function handleExport() {
-    const text = buildExportText();
-    const usedNativeShare = await nativeShareText(exportFileName, text, "نتائج الفرز");
-    if (usedNativeShare) return;
-
-    const file = new File([text], exportFileName, { type: "text/plain" });
-    const nav = navigator as NavShare;
-
-    if (nav.share) {
-      if (nav.canShare?.({ files: [file] })) {
-        try {
-          await nav.share({ files: [file], title: "نتائج الفرز", text });
-          return;
-        } catch (err) {
-          if (err instanceof Error && err.name === "AbortError") return;
-        }
-      }
-      try {
-        await nav.share({ title: "نتائج الفرز", text });
-        return;
-      } catch (err) {
-        if (err instanceof Error && err.name === "AbortError") return;
-      }
-    }
-
-    const url = URL.createObjectURL(file);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = exportFileName;
-    a.click();
-    URL.revokeObjectURL(url);
-    flashStatus("متصفحك لا يدعم قائمة المشاركة، تم تنزيل الملف بدل ذلك");
-  }
-
-  function handleOpenWhatsApp() {
-    const text = buildExportText();
-    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
-  }
-
-  return (
-    <div className="flex flex-col gap-1">
-      <div className="flex gap-2">
-        <button
-          type="button"
-          disabled={picking}
-          onClick={() => void handleImportClick()}
-          className={cn(buttonVariants({ variant: "secondary" }), "flex-1")}
-        >
-          <Upload className="h-4 w-4" />
-          {picking ? "جارٍ..." : "استيراد"}
-        </button>
-        <Button variant="secondary" className="flex-1" onClick={() => void handleExport()}>
-          <Download className="h-4 w-4" />
-          تصدير
-        </Button>
-      </div>
-      <Button
-        className="w-full bg-[#25D366] text-white hover:bg-[#25D366]/90"
-        onClick={handleOpenWhatsApp}
-      >
-        <MessageCircle className="h-4 w-4" />
-        فتح واتساب مباشرة
-      </Button>
-      {status && <p className="text-center text-[11px] text-muted-foreground">{status}</p>}
-      <p className="text-center text-[11px] leading-5 text-muted-foreground">
-        لاستيراد ملف من واتساب مباشرة: ثبّت التطبيق على شاشتك الرئيسية، وبعدها
-        استخدم زر «مشاركة» داخل واتساب واختر «الفرز» من القائمة.
-      </p>
     </div>
   );
 }
