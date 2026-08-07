@@ -37,6 +37,7 @@ import {
   AppVoiceOverlay,
 } from "@/lib/app-voice";
 import { createSpeechPlateBuffer } from "@/lib/speech-plate";
+import { playSoftUiSound } from "@/lib/soft-ui-sound";
 import {
   loadFieldProfile,
   saveFieldProfile,
@@ -173,13 +174,17 @@ export default function RecordPage({
     }, ms);
   }
 
-  function stopListening() {
+  /** يعيد زر الأوامر الصوتية لوضعه الطبيعي بعد الأمر أو الإيقاف اليدوي */
+  function stopListening(reason: "manual" | "command" | "cleanup" = "manual") {
     speechRef.current?.stop();
     speechRef.current = null;
     plateBufRef.current.reset();
     if (plateCommitRef.current) clearTimeout(plateCommitRef.current);
     setListening(false);
     setInterim("");
+    if (reason === "command") {
+      playSoftUiSound("done");
+    }
   }
 
   function openOverlay(target: AppVoiceOverlay) {
@@ -206,7 +211,7 @@ export default function RecordPage({
     if (result.status === "exact") {
       setFound(result.row);
       showNotice("وُجدت اللوحة");
-      stopListening();
+      stopListening("command");
       return;
     }
     if (result.status === "similar") {
@@ -215,7 +220,7 @@ export default function RecordPage({
         `لم يُعثر على الرقم المطلوب (${result.query})، وُجد رقم قريب الشبه: ${result.row.plate}`,
         5500
       );
-      stopListening();
+      stopListening("command");
       return;
     }
     showNotice("لم تُوجد مطابقة — أعد المحاولة بوضوح");
@@ -232,13 +237,13 @@ export default function RecordPage({
 
       if (action.type === "help") {
         showNotice(appVoiceHelpText(), 5500);
-        stopListening();
+        stopListening("command");
         return;
       }
 
       if (action.type === "navigate_tab") {
         showNotice(`تم: ${action.label}`);
-        stopListening();
+        stopListening("command");
         onNavigateTab?.(action.tab);
         return;
       }
@@ -247,14 +252,14 @@ export default function RecordPage({
         const ok = openOverlay(action.target);
         if (ok) {
           showNotice(`تم: ${action.label}`);
-          stopListening();
+          stopListening("command");
         }
         return;
       }
 
       if (action.type === "audio_record") {
         showNotice("بدء التسجيل الصوتي");
-        stopListening();
+        stopListening("command");
         void startRecording();
         return;
       }
@@ -278,6 +283,8 @@ export default function RecordPage({
   }
 
   function startListening() {
+    // صوت ناعم فور الضغط — قبل بدء الاستماع
+    playSoftUiSound("listen");
     setNotice(null);
     setFound(null);
     setLastHeard("");
@@ -290,8 +297,17 @@ export default function RecordPage({
     const handle = startAppVoice({
       onFinal: handleTranscript,
       onInterim: setInterim,
-      onError: (m) => showNotice(m, 4000),
-      onEnd: () => setListening(false),
+      onError: (m) => {
+        showNotice(m, 4000);
+        // أي خطأ يمنع الاستمرار → العودة للوضع الطبيعي
+        stopListening("cleanup");
+      },
+      onEnd: () => {
+        // انتهاء الجلسة من المحرك → زر الأوامر يعود لوضعه الطبيعي
+        setListening(false);
+        setInterim("");
+        speechRef.current = null;
+      },
     });
     if (!handle) return;
     speechRef.current = handle;
@@ -707,8 +723,19 @@ export default function RecordPage({
           size="lg"
           variant={listening ? "destructive" : "default"}
           className="w-full"
-          onClick={listening ? stopListening : startListening}
+          onClick={() => {
+            if (listening) {
+              // ضغط الإيقاف: صوت ناعم ثم العودة للوضع الطبيعي
+              playSoftUiSound("done");
+              stopListening("manual");
+              return;
+            }
+            // ضغط البدء: صوت ناعم داخل startListening
+            startListening();
+          }}
           disabled={recording}
+          aria-pressed={listening}
+          aria-label={listening ? "إيقاف الأوامر الصوتية" : "ابدأ الأوامر الصوتية"}
         >
           {listening ? <Square className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
           {listening ? "إيقاف الأوامر" : "ابدأ الأوامر الصوتية"}
