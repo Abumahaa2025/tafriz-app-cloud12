@@ -44,7 +44,7 @@
   ],
   "rewrites": [
     {
-      "source": "/((?!\\.well-known/|downloads/|install\\.html|.*\\.apk$).*)",
+      "source": "/((?!api/|\\.well-known/|downloads/|install\\.html|.*\\.apk$).*)",
       "destination": "/index.html"
     }
   ],

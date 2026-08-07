@@ -14,6 +14,7 @@ import {
   ChevronUp,
   Zap,
   Download,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,6 +30,8 @@ import {
   lookupPlateVoiceDetailed,
 } from "@/lib/check-engine";
 import { googleMapsOpenUrl } from "@/lib/map-coords";
+import { requestMapsAssist } from "@/lib/ai-maps";
+import { backend } from "@/lib/backend";
 import {
   appVoiceHelpText,
   isAppVoiceSupported,
@@ -99,6 +102,8 @@ export default function RecordPage({
   const [elapsedMs, setElapsedMs] = React.useState(0);
   const [streetCoords, setStreetCoords] = React.useState<{ lat: number; lng: number } | null>(null);
   const [dumpRows, setDumpRows] = React.useState<FieldDumpRow[]>([]);
+  const [mapsAiBusy, setMapsAiBusy] = React.useState(false);
+  const [mapsAiHint, setMapsAiHint] = React.useState<string | null>(null);
   const pendingPointsRef = React.useRef<GpsPoint[]>([]);
   const recordStartedAt = React.useRef(0);
   const maxTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -146,6 +151,55 @@ export default function RecordPage({
       },
       () => setAudioError("تعذّر قراءة GPS — امنح إذن الموقع")
     );
+  }
+
+  async function suggestStreetFromMapsAi(coords?: { lat: number; lng: number } | null) {
+    const location = coords ?? streetCoords;
+    if (!location) {
+      captureGpsPoint();
+      setMapsAiHint("التقط نقطة GPS أولًا ثم أعد المحاولة.");
+      return;
+    }
+    setMapsAiBusy(true);
+    setMapsAiHint(null);
+    try {
+      const points = pendingPointsRef.current;
+      const result =
+        points.length >= 2
+          ? await requestMapsAssist({
+              action: "track",
+              points: points.map((p) => ({ lat: p.lat, lng: p.lng })),
+              location,
+              query: "تتبع تسجيل ميداني",
+            })
+          : await requestMapsAssist({
+              action: "locate",
+              location,
+            });
+
+      const street =
+        result.street ||
+        [result.placeName, result.neighborhood].filter(Boolean).join(" - ") ||
+        "";
+      if (street || result.neighborhood?.trim()) {
+        setFieldProfile((prev) => {
+          const next = {
+            ...prev,
+            street: street || prev.street,
+            neighborhood: result.neighborhood?.trim() || prev.neighborhood,
+          };
+          saveFieldProfile(next);
+          return next;
+        });
+      }
+      setMapsAiHint(result.summary || street || "تم تحديد الموقع عبر Gemini Maps");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "تعذّر تحديد الشارع من الخرائط";
+      setMapsAiHint(msg);
+      backend.logError(msg, "RecordPage: maps-assist").catch(() => {});
+    } finally {
+      setMapsAiBusy(false);
+    }
   }
 
   React.useEffect(() => {
@@ -565,6 +619,20 @@ export default function RecordPage({
             <p className="text-[11px] text-muted-foreground">
               موقع الشارع — {streetCoords.lat.toFixed(6)}, {streetCoords.lng.toFixed(6)}
             </p>
+          )}
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="w-full"
+            disabled={mapsAiBusy}
+            onClick={() => void suggestStreetFromMapsAi()}
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            {mapsAiBusy ? "جاري التحديد من Gemini Maps..." : "تعرّف على الشارع من GPS"}
+          </Button>
+          {mapsAiHint && (
+            <p className="text-[11px] text-muted-foreground">{mapsAiHint}</p>
           )}
         </CardContent>
       </Card>

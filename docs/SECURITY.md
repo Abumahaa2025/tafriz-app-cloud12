@@ -21,6 +21,7 @@
 | `VITE_SUPABASE_ANON_KEY` | المتصفح | لا شيء — مفتاح عام مصمَّم للنشر، وRLS هي الحماية |
 | `SUPABASE_SERVICE_ROLE_KEY` | الخادم فقط | **كارثة** — يتجاوز RLS ويقرأ ويعدّل كل بيانات المشتركين |
 | `ANTHROPIC_API_KEY` | الخادم فقط | فاتورة على حسابك |
+| `GEMINI_API_KEY` | الخادم فقط | فاتورة على حسابك (Gemini + Google Maps grounding) |
 
 القاعدة الحاسمة: **Vite يستبدل كل متغيّر يبدأ بـ `VITE_` بقيمته نصًّا داخل حزمة
 الجافاسكربت وقت البناء.** فوضع سر في متغيّر `VITE_` = نشره على الإنترنت، حتى لو
@@ -31,7 +32,7 @@
 
 ```bash
 npm run build
-grep -rE 'sb_secret_|sk-ant-|SERVICE_ROLE' dist/ && echo "تسريب!" || echo "نظيفة"
+grep -rE 'sb_secret_|sk-ant-|AIza|SERVICE_ROLE|GEMINI_API_KEY' dist/ && echo "تسريب!" || echo "نظيفة"
 ```
 
 كذلك لا تُنشَر خرائط المصدر (source maps) في الإنتاج — إعداد Vite الافتراضي

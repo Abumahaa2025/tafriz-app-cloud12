@@ -1,11 +1,13 @@
 import * as React from "react";
-import { MapPin, LocateFixed, ArrowRight, Car, ExternalLink, Search } from "lucide-react";
+import { MapPin, LocateFixed, ArrowRight, Car, ExternalLink, Search, Sparkles, Route } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { loadLocalCached } from "@/lib/storage";
-import { SortResult } from "@/lib/sort-logic";
+import { loadLocal, loadLocalCached, saveLocal } from "@/lib/storage";
+import { SortResult, SortResultRow } from "@/lib/sort-logic";
 import { googleMapsOpenUrl } from "@/lib/map-coords";
 import { ClusterMap } from "@/components/ClusterMap";
+import { requestMapsAssist, type MapsAssistResult } from "@/lib/ai-maps";
+import { backend } from "@/lib/backend";
 
 interface LastSortState {
   result: SortResult | null;
@@ -29,6 +31,9 @@ export default function MapsPage({ onBack }: { onBack?: () => void }) {
   const [query, setQuery] = React.useState("");
   const [selectedPlate, setSelectedPlate] = React.useState<string | null>(null);
   const [mode, setMode] = React.useState<"fleet" | "me">("fleet");
+  const [aiBusy, setAiBusy] = React.useState(false);
+  const [aiError, setAiError] = React.useState<string | null>(null);
+  const [aiAssist, setAiAssist] = React.useState<MapsAssistResult | null>(null);
 
   // إعادة القراءة عند إظهار الصفحة فقط (بدون polling كل ثوانٍ)
   const [tick, setTick] = React.useState(0);
@@ -142,6 +147,99 @@ export default function MapsPage({ onBack }: { onBack?: () => void }) {
     [liveFleet]
   );
 
+  function persistFleetRow(plate: string, patch: Partial<SortResultRow>) {
+    const state = loadLocal<LastSortState>("last_sort_state", { result: null });
+    if (!state.result?.matchedRows?.length) return;
+    const matchedRows = state.result.matchedRows.map((row) =>
+      row.plate === plate ? { ...row, ...patch } : row
+    );
+    saveLocal("last_sort_state", { ...state, result: { ...state.result, matchedRows } });
+    setTick((t) => t + 1);
+  }
+
+  async function runAiResolveSelected() {
+    if (!selected) return;
+    const q = (selected.street || selected.plate || "").trim();
+    if (!q) {
+      setAiError("لا يوجد وصف موقع لهذه اللوحة لتحديده.");
+      return;
+    }
+    setAiBusy(true);
+    setAiError(null);
+    try {
+      const result = await requestMapsAssist({
+        action: "resolve",
+        query: q,
+        location: myCoords,
+      });
+      setAiAssist(result);
+      if (result.lat != null && result.lng != null) {
+        persistFleetRow(selected.plate, {
+          lat: result.lat,
+          lng: result.lng,
+          mapUrl: result.mapUrl ?? selected.mapUrl ?? null,
+          street: result.street || selected.street,
+        });
+        setMode("fleet");
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "تعذّر تحديد الموقع بالذكاء";
+      setAiError(msg);
+      backend.logError(msg, "MapsPage: resolve").catch(() => {});
+    } finally {
+      setAiBusy(false);
+    }
+  }
+
+  async function runAiLocateMe() {
+    if (!myCoords) {
+      locate();
+      setAiError("حدّد موقعك أولًا ثم أعد المحاولة.");
+      return;
+    }
+    setAiBusy(true);
+    setAiError(null);
+    try {
+      const result = await requestMapsAssist({
+        action: "locate",
+        location: myCoords,
+      });
+      setAiAssist(result);
+      setMode("me");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "تعذّر وصف الموقع الحالي";
+      setAiError(msg);
+      backend.logError(msg, "MapsPage: locate").catch(() => {});
+    } finally {
+      setAiBusy(false);
+    }
+  }
+
+  async function runAiTrackFleet() {
+    const points = fleetPoints.slice(0, 40).map((p) => ({ lat: p.lat, lng: p.lng }));
+    if (points.length < 2) {
+      setAiError("يلزم سيارتان على الأقل بإحداثيات لتحليل مسار الأسطول.");
+      return;
+    }
+    setAiBusy(true);
+    setAiError(null);
+    try {
+      const result = await requestMapsAssist({
+        action: "track",
+        points,
+        location: myCoords,
+        query: `أسطول مفروز: ${points.length} نقطة`,
+      });
+      setAiAssist(result);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "تعذّر تحليل مسار الأسطول";
+      setAiError(msg);
+      backend.logError(msg, "MapsPage: track").catch(() => {});
+    } finally {
+      setAiBusy(false);
+    }
+  }
+
   return (
     <div className="mx-auto flex max-w-md flex-col gap-4 px-4 pb-28 pt-4">
       <header className="flex items-center gap-2 py-2">
@@ -236,6 +334,73 @@ export default function MapsPage({ onBack }: { onBack?: () => void }) {
           </Button>
         )}
       </div>
+
+      <div className="grid grid-cols-1 gap-2">
+        <Button
+          type="button"
+          variant="secondary"
+          className="w-full"
+          disabled={aiBusy || !selected}
+          onClick={() => void runAiResolveSelected()}
+        >
+          <Sparkles className="h-4 w-4" />
+          {aiBusy ? "جاري التحديد..." : "تحديد اللوحة بـ Gemini Maps"}
+        </Button>
+        <div className="grid grid-cols-2 gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={aiBusy}
+            onClick={() => void runAiLocateMe()}
+          >
+            <MapPin className="h-4 w-4" />
+            وصف موقعي
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={aiBusy || fleetPoints.length < 2}
+            onClick={() => void runAiTrackFleet()}
+          >
+            <Route className="h-4 w-4" />
+            تتبع الأسطول
+          </Button>
+        </div>
+      </div>
+
+      {(aiError || aiAssist) && (
+        <div className="rounded-xl border border-border bg-secondary/30 px-3 py-2 text-right text-sm">
+          {aiError && <p className="text-destructive">{aiError}</p>}
+          {aiAssist && !aiError && (
+            <div className="flex flex-col gap-1">
+              <p className="text-xs font-bold text-primary">مساعدة Gemini + Google Maps</p>
+              <p className="text-sm">{aiAssist.summary || aiAssist.placeName || "تم التحديد"}</p>
+              {(aiAssist.street || aiAssist.neighborhood || aiAssist.city) && (
+                <p className="text-xs text-muted-foreground">
+                  {[aiAssist.street, aiAssist.neighborhood, aiAssist.city].filter(Boolean).join(" · ")}
+                </p>
+              )}
+              {aiAssist.lat != null && aiAssist.lng != null && (
+                <p className="font-mono text-[11px] text-muted-foreground" dir="ltr">
+                  {aiAssist.lat.toFixed(6)}, {aiAssist.lng.toFixed(6)}
+                </p>
+              )}
+              {aiAssist.mapUrl && (
+                <button
+                  type="button"
+                  className="mt-1 self-start text-xs font-bold text-primary"
+                  onClick={() => window.open(aiAssist.mapUrl!, "_blank", "noopener,noreferrer")}
+                >
+                  فتح نتيجة الخريطة
+                </button>
+              )}
+            </div>
+          )}
+          <p className="mt-2 text-[10px] text-muted-foreground">
+            تُستخدم بيانات Google Maps عبر Gemini للإجابة — يلزم GEMINI_API_KEY على الخادم.
+          </p>
+        </div>
+      )}
 
       <Button
         className="w-full"

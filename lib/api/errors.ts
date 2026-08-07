@@ -37,6 +37,7 @@ const SECRET_PATTERNS: RegExp[] = [
   /\bsb_publishable_[A-Za-z0-9_-]+/g,
   /\bsbp_[A-Za-z0-9]+/g,
   /\bsk-ant-[A-Za-z0-9_-]+/g,
+  /\bAIza[0-9A-Za-z_-]{20,}/g, // Google/Gemini API keys
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+/g, // JWT
   /\bBearer\s+[A-Za-z0-9._-]{16,}/gi,
 ];
