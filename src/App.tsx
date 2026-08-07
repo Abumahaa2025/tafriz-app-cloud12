@@ -14,6 +14,7 @@ import PrivacyPage from "@/pages/PrivacyPage";
 import DatabasePage from "@/pages/DatabasePage";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { backend } from "@/lib/backend";
+import { Sentry, isSentryEnabled } from "@/instrument";
 import { FeedbackNotifyWatcher } from "@/components/FeedbackNotifyWatcher";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { RefreshAppButton } from "@/components/RefreshAppButton";
@@ -98,9 +99,15 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
   static getDerivedStateFromError() {
     return { hasError: true };
   }
-  componentDidCatch(error: Error) {
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
     // يسجَّل الخطأ تلقائيًا ليطّلع عليه المالك من "إدارة التحكم ▸ الأخطاء"
     backend.logError(error.message, error.stack ?? undefined).catch(() => {});
+    // وإلى Sentry إن كان VITE_SENTRY_DSN مضبوطًا
+    if (isSentryEnabled) {
+      Sentry.captureException(error, {
+        contexts: { react: { componentStack: info.componentStack } },
+      });
+    }
   }
   render() {
     if (this.state.hasError) {

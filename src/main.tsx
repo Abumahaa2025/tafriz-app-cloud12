@@ -1,3 +1,5 @@
+import "./instrument"; // يجب أن يبقى أول استيراد — تهيئة Sentry قبل أي كود
+
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
