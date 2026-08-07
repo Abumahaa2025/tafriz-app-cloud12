@@ -60,6 +60,14 @@ export function readAnthropicKey(): string | undefined {
   return read("ANTHROPIC_API_KEY");
 }
 
+/**
+ * مفتاح Gemini لخدمة الخرائط والتتبع (أداة google_maps).
+ * الميزة تتعطّل بدونه ولا ينكسر باقي التطبيق.
+ */
+export function readGeminiKey(): string | undefined {
+  return read("GEMINI_API_KEY");
+}
+
 /** معرّف حساب المالك. يطابق OWNER_IDENTIFIER في src/lib/owner-config.ts. */
 export function readOwnerIdentifier(): string {
   return read("OWNER_IDENTIFIER") ?? "0575051487";
