@@ -51,9 +51,10 @@ export function InstallAppBanner() {
     }
   }, []);
 
-  // عند forceHelp لا نخفي بسبب unavailable إلا لو standalone فعلًا
-  if (!forceHelp && (hidden || state === "unavailable")) return null;
-  if (forceHelp && state === "unavailable" && !showSteps) return null;
+  // unavailable = يعمل standalone فعلًا — لا بانر
+  if (state === "unavailable") return null;
+  // forceHelp من القائمة يتجاوز الإخفاء اليدوي السابق
+  if (hidden && !forceHelp) return null;
 
   function dismiss() {
     rememberPromptDismissed();
