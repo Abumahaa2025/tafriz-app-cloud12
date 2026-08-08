@@ -6,6 +6,8 @@ import {
   detectInstallManualKind,
   InstallState,
   isRunningStandalone,
+  ANDROID_APK_HREF,
+  isAndroidDevice,
   openInstalledAppNavigation,
   rememberPromptDismissed,
   shouldOfferInstallUi,
@@ -30,6 +32,7 @@ export function InstallAppBanner() {
   const [copied, setCopied] = React.useState(false);
   const installRef = React.useRef<null | (() => Promise<string>)>(null);
   const manualKind = React.useMemo(() => detectInstallManualKind(), []);
+  const android = React.useMemo(() => isAndroidDevice(), []);
   const hasBottomNav = user?.status === "approved";
 
   // على شاشة الدخول/قبل الاعتماد: البطاقة العلوية وحدها — لتجنب تعارض مع نافذة النظام
@@ -109,6 +112,16 @@ export function InstallAppBanner() {
     openInstalledAppNavigation();
   }
 
+  function downloadAndroidApk() {
+    const a = document.createElement("a");
+    a.href = ANDROID_APK_HREF;
+    a.download = "Tafriz.apk";
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
   async function onInstallClick() {
     if (state === "waiting" || state === "installed") return;
     const result = await installRef.current?.();
@@ -185,6 +198,13 @@ export function InstallAppBanner() {
           <Button className="w-full" onClick={() => void onInstallClick()}>
             <Download className="h-4 w-4" />
             تثبيت الآن
+          </Button>
+        )}
+
+        {android && state !== "waiting" && (
+          <Button type="button" variant="secondary" className="w-full" onClick={downloadAndroidApk}>
+            <Download className="h-4 w-4" />
+            تنزيل التطبيق (أندرويد)
           </Button>
         )}
 

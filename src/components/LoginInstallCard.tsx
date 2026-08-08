@@ -3,9 +3,12 @@ import { Download, Check, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
+  ANDROID_APK_HREF,
   InstallState,
+  isAndroidDevice,
   isRunningStandalone,
   openInstalledAppNavigation,
+  prefersAndroidApkInstall,
   shouldOfferInstallUi,
   watchInstallAvailability,
 } from "@/lib/install-app";
@@ -13,7 +16,7 @@ import {
 /**
  * مسار تثبيت مستقيم على شاشة الدخول:
  * تثبيت الآن → جاري التثبيت → تم التثبيت → فتح التطبيق
- * بدون خطوات يدوية ملتوية طالما موجّه النظام متاح.
+ * مع تنزيل APK عندما يثبّت المتصفح اختصار ويب فقط.
  */
 export function LoginInstallCard() {
   const [visible] = React.useState(() => shouldOfferInstallUi() && !isRunningStandalone());
@@ -22,6 +25,8 @@ export function LoginInstallCard() {
   );
   const [needHelp, setNeedHelp] = React.useState(false);
   const installRef = React.useRef<null | (() => Promise<string>)>(null);
+  const android = React.useMemo(() => isAndroidDevice(), []);
+  const preferApk = React.useMemo(() => prefersAndroidApkInstall(), []);
 
   React.useEffect(() => {
     if (!visible) return;
@@ -34,6 +39,16 @@ export function LoginInstallCard() {
   }, [visible]);
 
   if (!visible || state === "unavailable") return null;
+
+  function downloadAndroidApk() {
+    const a = document.createElement("a");
+    a.href = ANDROID_APK_HREF;
+    a.download = "Tafriz.apk";
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
 
   async function onInstall() {
     if (state === "installed") {
@@ -50,8 +65,9 @@ export function LoginInstallCard() {
     if (state === "ready" || state === "waiting" || state === "installed") setNeedHelp(false);
   }, [state]);
 
-  const step =
-    state === "installed" ? 3 : state === "waiting" ? 2 : 1;
+  const step = state === "installed" ? 3 : state === "waiting" ? 2 : 1;
+  const showApk =
+    android && state !== "waiting" && (preferApk || state === "installed" || needHelp || state === "manual");
 
   const title =
     state === "installed"
@@ -62,10 +78,12 @@ export function LoginInstallCard() {
 
   const subtitle =
     state === "installed"
-      ? "اضغط «فتح التطبيق» للبدء، أو افتح أيقونة «الفرز» من الشاشة الرئيسية."
+      ? "افتح أيقونة «الفرز» من الشاشة الرئيسية بدون شريط المتصفح. إن بقي كويب استخدم تنزيل تطبيق أندرويد."
       : state === "waiting"
-        ? "اضغط «إضافة» في نافذة النظام الظاهرة. إن كانت مخفية في الإشعارات افتحها وأكّد الإضافة."
-        : "مسار واحد: تثبيت الآن ← جاري التثبيت ← تم التثبيت ← فتح التطبيق.";
+        ? "أكّد «إضافة» في نافذة النظام، ثم افتح الأيقونة من الشاشة الرئيسية كتطبيق."
+        : preferApk
+          ? "ثبّت من Chrome كتطبيق، أو نزّل تطبيق أندرويد إن بقي كصفحة ويب."
+          : "مسار واحد: تثبيت الآن ← جاري التثبيت ← تم التثبيت ← فتح التطبيق.";
 
   return (
     <Card className="border-primary/30 bg-primary/5 shadow-md">
@@ -109,26 +127,29 @@ export function LoginInstallCard() {
             <Loader2 className="h-4 w-4 animate-spin" />
             جاري التثبيت…
           </Button>
+        ) : state === "installed" ? (
+          <Button className="w-full" onClick={() => openInstalledAppNavigation()}>
+            <Check className="h-4 w-4" />
+            فتح التطبيق
+          </Button>
         ) : (
           <Button className="w-full" onClick={() => void onInstall()}>
-            {state === "installed" ? (
-              <>
-                <Check className="h-4 w-4" />
-                فتح التطبيق
-              </>
-            ) : (
-              <>
-                <Download className="h-4 w-4" />
-                تثبيت الآن
-              </>
-            )}
+            <Download className="h-4 w-4" />
+            تثبيت الآن
+          </Button>
+        )}
+
+        {showApk && (
+          <Button type="button" variant="secondary" className="w-full" onClick={downloadAndroidApk}>
+            <Download className="h-4 w-4" />
+            تنزيل التطبيق (أندرويد)
           </Button>
         )}
 
         {needHelp && state !== "waiting" && state !== "installed" && (
           <p className="rounded-xl bg-secondary/60 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
-            افتح قائمة Chrome ⋮ ثم «تثبيت التطبيق». على هواوي إن ظهرت الرسالة في الإشعارات
-            فقط — اسحب مركز الإشعارات واضغط «إضافة».
+            من Chrome: ⋮ → «تثبيت التطبيق». أيقونة بشارة Chrome = اختصار ويب. للتطبيق الحقيقي استخدم
+            «تنزيل التطبيق (أندرويد)» ثم ثبّت الملف من التنزيلات.
           </p>
         )}
 
