@@ -51,6 +51,11 @@ import {
   type GpsPoint,
 } from "@/lib/field-recording";
 import {
+  buildRecordedAudioBlob,
+  createAudioMediaRecorder,
+  isAudioRecordingSupported,
+} from "@/lib/media-recorder";
+import {
   dumpSessionToRows,
   loadDumpRows,
   saveDumpRows,
@@ -92,6 +97,7 @@ export default function RecordPage({
   const [audioError, setAudioError] = React.useState<string | null>(null);
   const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
   const chunksRef = React.useRef<Blob[]>([]);
+  const recordMimeRef = React.useRef("");
   const speechRef = React.useRef<{ stop: () => void } | null>(null);
   const tipTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const plateBufRef = React.useRef(createSpeechPlateBuffer());
@@ -383,17 +389,25 @@ export default function RecordPage({
       setBasicOpen(true);
       return;
     }
+    if (!isAudioRecordingSupported()) {
+      setAudioError("التسجيل الصوتي غير مدعوم في هذا المتصفح");
+      return;
+    }
+    let stream: MediaStream | null = null;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const { recorder, mimeType } = createAudioMediaRecorder(stream);
+      recordMimeRef.current = mimeType;
       chunksRef.current = [];
       setGpsPoints([]);
       pendingPointsRef.current = [];
       recordStartedAt.current = Date.now();
       setElapsedMs(0);
-      recorder.ondataavailable = (e) => chunksRef.current.push(e.data);
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
+      };
       recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        const blob = buildRecordedAudioBlob(chunksRef.current, recordMimeRef.current);
         const url = URL.createObjectURL(blob);
         const pointsSnapshot = pendingPointsRef.current.slice();
         setRecordings((prev) => [
@@ -409,12 +423,17 @@ export default function RecordPage({
           },
           ...prev,
         ]);
-        stream.getTracks().forEach((t) => t.stop());
+        stream?.getTracks().forEach((t) => t.stop());
         clearGpsWatchers();
         setElapsedMs(0);
         pendingPointsRef.current = [];
       };
-      recorder.start();
+      // timeslice يساعد Safari/iOS على تفريغ القطع أثناء التسجيل الطويل
+      try {
+        recorder.start(1000);
+      } catch {
+        recorder.start();
+      }
       mediaRecorderRef.current = recorder;
       setRecording(true);
       captureGpsPoint();
@@ -429,12 +448,20 @@ export default function RecordPage({
         );
       }
     } catch {
+      stream?.getTracks().forEach((t) => t.stop());
       setAudioError("تعذّر الوصول للمايكروفون — تأكد من منح الإذن للمتصفح");
     }
   }
 
   function stopRecording() {
-    mediaRecorderRef.current?.stop();
+    const rec = mediaRecorderRef.current;
+    if (rec && rec.state !== "inactive") {
+      try {
+        rec.stop();
+      } catch {
+        // بعض المتصفحات ترمي إن أُوقف مرتين
+      }
+    }
     setRecording(false);
     clearGpsWatchers();
   }
