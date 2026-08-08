@@ -5,9 +5,10 @@ import { useAuth } from "@/context/AuthContext";
 import {
   detectInstallManualKind,
   InstallState,
+  isRunningStandalone,
   rememberInstallOpened,
   rememberPromptDismissed,
-  wasPromptDismissedRecently,
+  shouldOfferInstallUi,
   watchInstallAvailability,
 } from "@/lib/install-app";
 
@@ -15,13 +16,17 @@ import {
  * تثبيت PWA فقط.
  * - يظهر من أول فتح للتطبيق (شاشة الدخول) على الجوال.
  * - أثناء التثبيت يبقى شريط التنزيل ظاهرًا ثم يتحول إلى «فتح التطبيق».
- * - «تثبيت الآن» يظهر فقط عند وجود beforeinstallprompt (ready).
+ * - «تثبيت التطبيق» يظهر دائمًا على الجوال في المتصفح (مباشر أو يدوي).
  * - لا redirect إلى Chrome Intent ولا إلى install.html/APK من هذا البانر.
  */
 export function InstallAppBanner() {
   const { user } = useAuth();
-  const [state, setState] = React.useState<InstallState>("unavailable");
-  const [hidden, setHidden] = React.useState(() => wasPromptDismissedRecently());
+  const [state, setState] = React.useState<InstallState>(() => {
+    if (typeof window === "undefined") return "unavailable";
+    if (isRunningStandalone() || !shouldOfferInstallUi()) return "unavailable";
+    return "manual";
+  });
+  const [hidden, setHidden] = React.useState(false);
   const [showSteps, setShowSteps] = React.useState(false);
   const [forceHelp, setForceHelp] = React.useState(false);
   const [copied, setCopied] = React.useState(false);
@@ -60,9 +65,19 @@ export function InstallAppBanner() {
     }
   }, []);
 
-  // أثناء التنزيل أو بعد التثبيت: أظهر الشريط حتى لو كان المستخدم قد أخفى التذكير سابقًا
   React.useEffect(() => {
-    if (state === "waiting" || state === "installed") {
+    const reveal = () => {
+      setHidden(false);
+      setForceHelp(true);
+      setShowSteps(true);
+    };
+    window.addEventListener("tafriz:show-install", reveal);
+    return () => window.removeEventListener("tafriz:show-install", reveal);
+  }, []);
+
+  // أثناء التنزيل / التثبيت الجاهز / بعد التثبيت: أظهر الشريط دائمًا
+  React.useEffect(() => {
+    if (state === "waiting" || state === "installed" || state === "ready") {
       setHidden(false);
     }
   }, [state]);
@@ -91,6 +106,15 @@ export function InstallAppBanner() {
     window.location.assign("/?source=pwa");
   }
 
+  async function onInstallClick() {
+    if (state === "ready") {
+      const result = await installRef.current?.();
+      if (result === "unavailable" || result === "dismissed") setShowSteps(true);
+      return;
+    }
+    setShowSteps(true);
+  }
+
   const subtitle =
     state === "ready"
       ? "ثبّت «الفرز» على الجوال لفتحه كتطبيق من الشاشة الرئيسية (PWA — بدون APK)."
@@ -99,8 +123,8 @@ export function InstallAppBanner() {
         : state === "installed"
           ? "اكتمل التثبيت. اضغط «فتح التطبيق» أو افتح أيقونة «الفرز» من الشاشة الرئيسية."
           : manualKind === "huawei"
-            ? "على هذا الجهاز قد لا يتوفر زر التثبيت المباشر. اتبع خطوات Chrome بالأسفل (PWA فقط — ليس APK)."
-            : "إن لم يظهر «تثبيت الآن» فالتثبيت اليدوي من قائمة المتصفح هو المسار الصحيح.";
+            ? "اضغط «تثبيت التطبيق» واتبع خطوات Chrome بالأسفل (PWA فقط — ليس APK)."
+            : "اضغط «تثبيت التطبيق» واتبع الخطوات إن لم يظهر موجّه النظام مباشرة.";
 
   return (
     <div className={`fixed inset-x-0 z-40 px-4 ${hasBottomNav ? "bottom-[4.75rem]" : "bottom-4"}`}>
@@ -149,19 +173,7 @@ export function InstallAppBanner() {
           </div>
         )}
 
-        {state === "ready" ? (
-          <Button
-            className="w-full"
-            onClick={() => {
-              void installRef.current?.().then((result) => {
-                if (result === "unavailable" || result === "dismissed") setShowSteps(true);
-              });
-            }}
-          >
-            <Download className="h-4 w-4" />
-            تثبيت الآن
-          </Button>
-        ) : state === "waiting" ? (
+        {state === "waiting" ? (
           <Button className="w-full" disabled>
             <Loader2 className="h-4 w-4 animate-spin" />
             جاري التنزيل والتثبيت…
@@ -172,12 +184,13 @@ export function InstallAppBanner() {
             فتح التطبيق
           </Button>
         ) : (
-          <Button variant="secondary" className="w-full" onClick={() => setShowSteps((v) => !v)}>
-            {showSteps ? "إخفاء الخطوات" : "خطوات التثبيت اليدوي"}
+          <Button className="w-full" onClick={() => void onInstallClick()}>
+            <Download className="h-4 w-4" />
+            تثبيت التطبيق
           </Button>
         )}
 
-        {showSteps && state !== "ready" && state !== "waiting" && state !== "installed" && (
+        {showSteps && state !== "waiting" && state !== "installed" && (
           <>
             <ManualInstallSteps kind={manualKind} />
             <Button variant="outline" className="w-full" onClick={() => void copyPageLink()}>
@@ -185,8 +198,7 @@ export function InstallAppBanner() {
               {copied ? "تم نسخ الرابط" : "نسخ رابط التطبيق"}
             </Button>
             <p className="text-center text-[10px] text-muted-foreground">
-              لا يوجد توجيه تلقائي إلى Chrome أو تنزيل APK من هذا الزر. إن لم يدعم جهازك
-              beforeinstallprompt فخطوات القائمة أعلاه هي المسار الصحيح.
+              التثبيت عبر المتصفح (PWA). إن لم يظهر موجّه النظام فخطوات القائمة أعلاه هي المسار الصحيح.
             </p>
           </>
         )}
