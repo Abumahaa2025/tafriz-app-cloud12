@@ -21,7 +21,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { TabKey } from "@/components/BottomNav";
 import { MenuTarget } from "@/components/AppMenu";
-import { idbGet } from "@/lib/idb";
+import { idbGet, idbUserMessage } from "@/lib/idb";
 import {
   CHECK_IDB_KEY,
   CheckSheetData,
@@ -210,12 +210,16 @@ export default function RecordPage({
   }
 
   React.useEffect(() => {
-    loadDumpRows().then((rows) => setDumpRows(rows)).catch(() => {});
-    idbGet<CheckSheetData>(CHECK_IDB_KEY).then((saved) => {
-      if (!saved?.rows?.length) return;
-      setHasCheckFile(true);
-      setCheckIndex(indexCheckSheet(saved));
-    });
+    loadDumpRows()
+      .then((rows) => setDumpRows(rows))
+      .catch((err) => showNotice(idbUserMessage(err, "load"), 5000));
+    idbGet<CheckSheetData>(CHECK_IDB_KEY)
+      .then((saved) => {
+        if (!saved?.rows?.length) return;
+        setHasCheckFile(true);
+        setCheckIndex(indexCheckSheet(saved));
+      })
+      .catch((err) => showNotice(idbUserMessage(err, "load"), 5000));
     return () => {
       speechRef.current?.stop();
       speechRef.current = null;
@@ -224,6 +228,7 @@ export default function RecordPage({
       if (plateCommitRef.current) clearTimeout(plateCommitRef.current);
       clearGpsWatchers();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function showNotice(msg: string, ms = 3200) {
@@ -480,9 +485,13 @@ export default function RecordPage({
     });
     const next = [...rows, ...dumpRows];
     setDumpRows(next);
-    await saveDumpRows(next);
     setRecordings((prev) => prev.map((r) => (r.id === rec.id ? { ...r, dumped: true } : r)));
-    showNotice(`تم التفريغ: ${rows.length} صف`);
+    try {
+      await saveDumpRows(next);
+      showNotice(`تم التفريغ: ${rows.length} صف`);
+    } catch (err) {
+      showNotice(idbUserMessage(err, "save"), 5000);
+    }
   }
 
   async function dumpAllPending() {
@@ -504,15 +513,23 @@ export default function RecordPage({
     }
     const next = [...added, ...dumpRows];
     setDumpRows(next);
-    await saveDumpRows(next);
     setRecordings((prev) => prev.map((r) => ({ ...r, dumped: true })));
-    showNotice(`تفريغ كل المعلق: ${added.length} صف من ${pending.length} تسجيل`);
+    try {
+      await saveDumpRows(next);
+      showNotice(`تفريغ كل المعلق: ${added.length} صف من ${pending.length} تسجيل`);
+    } catch (err) {
+      showNotice(idbUserMessage(err, "save"), 5000);
+    }
   }
 
   async function clearDumpTable() {
     setDumpRows([]);
-    await saveDumpRows([]);
-    showNotice("تم مسح جدول البيانات");
+    try {
+      await saveDumpRows([]);
+      showNotice("تم مسح جدول البيانات");
+    } catch (err) {
+      showNotice(idbUserMessage(err, "save"), 5000);
+    }
   }
 
   function exportDumpTable() {
