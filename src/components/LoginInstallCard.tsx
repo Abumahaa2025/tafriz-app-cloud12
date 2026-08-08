@@ -11,14 +11,16 @@ import {
 } from "@/lib/install-app";
 
 /**
- * بطاقة تثبيت ظاهرة في أعلى شاشة الدخول — نفس هوية التطبيق (primary / Card).
- * تستخدم نفس مراقب التثبيت؛ البانر السفلي يبقى متزامنًا عبر الأحداث.
+ * مسار تثبيت مستقيم على شاشة الدخول:
+ * تثبيت الآن → جاري التثبيت → تم التثبيت → فتح التطبيق
+ * بدون خطوات يدوية ملتوية طالما موجّه النظام متاح.
  */
 export function LoginInstallCard() {
   const [visible] = React.useState(() => shouldOfferInstallUi() && !isRunningStandalone());
   const [state, setState] = React.useState<InstallState>(() =>
     visible ? "manual" : "unavailable"
   );
+  const [needHelp, setNeedHelp] = React.useState(false);
   const installRef = React.useRef<null | (() => Promise<string>)>(null);
 
   React.useEffect(() => {
@@ -34,34 +36,49 @@ export function LoginInstallCard() {
   if (!visible || state === "unavailable") return null;
 
   async function onInstall() {
-    window.dispatchEvent(new CustomEvent("tafriz:show-install"));
     if (state === "installed") {
       rememberInstallOpened();
       window.location.assign("/?source=pwa");
       return;
     }
     if (state === "waiting") return;
-    // يفتح موجّه النظام إن توفر؛ وإلا تظهر خطوات التثبيت اليدوي في البانر
-    await installRef.current?.();
+    setNeedHelp(false);
+    const result = await installRef.current?.();
+    if (result === "unavailable" || result === "dismissed") setNeedHelp(true);
   }
+
+  React.useEffect(() => {
+    if (state === "ready" || state === "waiting" || state === "installed") setNeedHelp(false);
+  }, [state]);
+
+  const step =
+    state === "installed" ? 3 : state === "waiting" ? 2 : 1;
 
   const title =
     state === "installed"
-      ? "اكتمل التثبيت — افتح التطبيق"
+      ? "تم التثبيت"
       : state === "waiting"
-        ? "جاري تثبيت التطبيق…"
-        : "ثبّت التطبيق على جوالك";
+        ? "جاري التثبيت…"
+        : "تثبيت التطبيق الآن";
 
   const subtitle =
     state === "installed"
-      ? "اضغط «فتح التطبيق» الآن، أو افتح أيقونة «الفرز» من الشاشة الرئيسية."
+      ? "اضغط «فتح التطبيق» للبدء، أو افتح أيقونة «الفرز» من الشاشة الرئيسية."
       : state === "waiting"
-        ? "أكّد موجّه النظام إن ظهر — بعدها سيظهر زر الفتح مباشرة."
-        : "للتثبيت السريع على الشاشة الرئيسية قبل تسجيل الدخول.";
+        ? "اضغط «إضافة» في نافذة النظام الظاهرة. إن كانت مخفية في الإشعارات افتحها وأكّد الإضافة."
+        : "مسار واحد: تثبيت الآن ← جاري التثبيت ← تم التثبيت ← فتح التطبيق.";
 
   return (
     <Card className="border-primary/30 bg-primary/5 shadow-md">
       <CardContent className="flex flex-col gap-3 pt-5">
+        <div className="flex items-center justify-between gap-1 text-[10px] font-bold">
+          <StepDot active={step >= 1} done={step > 1} label="تثبيت الآن" />
+          <span className="h-px flex-1 bg-primary/20" />
+          <StepDot active={step >= 2} done={step > 2} label="جاري التثبيت" />
+          <span className="h-px flex-1 bg-primary/20" />
+          <StepDot active={step >= 3} done={step >= 3} label="فتح التطبيق" />
+        </div>
+
         <div className="flex items-start gap-2 text-right">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/15">
             {state === "installed" ? (
@@ -77,6 +94,7 @@ export function LoginInstallCard() {
             <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">{subtitle}</p>
           </div>
         </div>
+
         {state === "waiting" && (
           <div
             className="h-2 w-full overflow-hidden rounded-full bg-primary/15"
@@ -86,10 +104,11 @@ export function LoginInstallCard() {
             <div className="login-install-progress h-full w-1/3 rounded-full bg-primary" />
           </div>
         )}
+
         {state === "waiting" ? (
           <Button className="w-full" disabled>
             <Loader2 className="h-4 w-4 animate-spin" />
-            جاري التنزيل والتثبيت…
+            جاري التثبيت…
           </Button>
         ) : (
           <Button className="w-full" onClick={() => void onInstall()}>
@@ -101,11 +120,19 @@ export function LoginInstallCard() {
             ) : (
               <>
                 <Download className="h-4 w-4" />
-                تثبيت التطبيق
+                تثبيت الآن
               </>
             )}
           </Button>
         )}
+
+        {needHelp && state !== "waiting" && state !== "installed" && (
+          <p className="rounded-xl bg-secondary/60 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+            افتح قائمة Chrome ⋮ ثم «تثبيت التطبيق». على هواوي إن ظهرت الرسالة في الإشعارات
+            فقط — اسحب مركز الإشعارات واضغط «إضافة».
+          </p>
+        )}
+
         <style>{`
           @keyframes login-install-progress-slide {
             0% { transform: translateX(-120%); }
@@ -117,5 +144,25 @@ export function LoginInstallCard() {
         `}</style>
       </CardContent>
     </Card>
+  );
+}
+
+function StepDot({
+  active,
+  done,
+  label,
+}: {
+  active: boolean;
+  done: boolean;
+  label: string;
+}) {
+  return (
+    <span
+      className={`rounded-full px-2 py-1 ${
+        done || active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+      }`}
+    >
+      {label}
+    </span>
   );
 }

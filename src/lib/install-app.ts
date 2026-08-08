@@ -12,7 +12,7 @@ const FLOW_KEY = "install_flow_phase";
 /** إخفاء التذكير أسبوعًا بعد رفضه — تنبيه لا يُلاحق المستخدم. */
 const DISMISS_DAYS = 7;
 /** بعد قبول موجّه النظام نُكمل الواجهة إلى «فتح التطبيق» حتى لو تأخّر حدث appinstalled. */
-const ACCEPT_COMPLETE_MS = 2800;
+const ACCEPT_COMPLETE_MS = 1800;
 /** مهلة أمان إن علّق موجّه التثبيت دون رد. */
 const PROMPT_TIMEOUT_MS = 45000;
 

@@ -13,14 +13,12 @@ import {
 } from "@/lib/install-app";
 
 /**
- * تثبيت PWA فقط.
- * - يظهر من أول فتح للتطبيق (شاشة الدخول) على الجوال.
- * - أثناء التثبيت يبقى شريط التنزيل ظاهرًا ثم يتحول إلى «فتح التطبيق».
- * - «تثبيت التطبيق» يظهر دائمًا على الجوال في المتصفح (مباشر أو يدوي).
- * - لا redirect إلى Chrome Intent ولا إلى install.html/APK من هذا البانر.
+ * بانر تثبيت مبسّط بعد الدخول:
+ * تثبيت الآن → جاري التثبيت → تم التثبيت → فتح التطبيق
+ * على شاشة الدخول تتكفل LoginInstallCard بالمسار لتفادي تداخل النوافذ.
  */
 export function InstallAppBanner() {
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
   const [state, setState] = React.useState<InstallState>(() => {
     if (typeof window === "undefined") return "unavailable";
     if (isRunningStandalone() || !shouldOfferInstallUi()) return "unavailable";
@@ -34,6 +32,9 @@ export function InstallAppBanner() {
   const manualKind = React.useMemo(() => detectInstallManualKind(), []);
   const hasBottomNav = user?.status === "approved";
 
+  // على شاشة الدخول/قبل الاعتماد: البطاقة العلوية وحدها — لتجنب تعارض مع نافذة النظام
+  const onEntryScreen = !loading && (!user || user.status !== "approved");
+
   React.useEffect(() => {
     const watcher = watchInstallAvailability(setState);
     installRef.current = watcher.install;
@@ -44,14 +45,16 @@ export function InstallAppBanner() {
   }, []);
 
   React.useEffect(() => {
-    if (
-      state === "manual" ||
-      state === "use-chrome" ||
-      (manualKind === "huawei" && state !== "ready" && state !== "waiting" && state !== "installed")
-    ) {
+    // أخفِ الخطوات اليدوية أثناء المسار المباشر (ready/waiting/installed)
+    if (state === "ready" || state === "waiting" || state === "installed") {
+      setShowSteps(false);
+      return;
+    }
+    // أظهر المساعدة فقط إن تعذّر موجّه النظام
+    if (state === "manual" || state === "use-chrome") {
       setShowSteps(true);
     }
-  }, [state, manualKind]);
+  }, [state]);
 
   React.useEffect(() => {
     try {
@@ -69,19 +72,20 @@ export function InstallAppBanner() {
     const reveal = () => {
       setHidden(false);
       setForceHelp(true);
-      setShowSteps(true);
+      // لا تفرض الخطوات اليدوية إن كان التثبيت المباشر جاهزًا
+      if (state === "manual" || state === "use-chrome") setShowSteps(true);
     };
     window.addEventListener("tafriz:show-install", reveal);
     return () => window.removeEventListener("tafriz:show-install", reveal);
-  }, []);
+  }, [state]);
 
-  // أثناء التنزيل / التثبيت الجاهز / بعد التثبيت: أظهر الشريط دائمًا
   React.useEffect(() => {
     if (state === "waiting" || state === "installed" || state === "ready") {
       setHidden(false);
     }
   }, [state]);
 
+  if (onEntryScreen) return null;
   if (state === "unavailable") return null;
   if (hidden && !forceHelp) return null;
 
@@ -114,14 +118,12 @@ export function InstallAppBanner() {
 
   const subtitle =
     state === "ready"
-      ? "ثبّت «الفرز» على الجوال لفتحه كتطبيق من الشاشة الرئيسية (PWA — بدون APK)."
+      ? "اضغط «تثبيت الآن» ثم أكّد نافذة النظام — بعدها يظهر «فتح التطبيق»."
       : state === "waiting"
-        ? "أكّد موجّه النظام إن ظهر — بعدها سيكتمل التثبيت ويظهر زر الفتح."
+        ? "أكّد «إضافة» في نافذة النظام. إن كانت في الإشعارات افتحها الآن وأكّد."
         : state === "installed"
-          ? "اكتمل التثبيت. اضغط «فتح التطبيق» الآن أو افتح أيقونة «الفرز» من الشاشة الرئيسية."
-          : manualKind === "huawei"
-            ? "اضغط «تثبيت التطبيق» واتبع خطوات Chrome بالأسفل (PWA فقط — ليس APK)."
-            : "اضغط «تثبيت التطبيق» واتبع الخطوات إن لم يظهر موجّه النظام مباشرة.";
+          ? "تم التثبيت بنجاح. اضغط «فتح التطبيق»."
+          : "إن لم يظهر موجّه النظام، استخدم الخطوات المختصرة بالأسفل.";
 
   return (
     <div className={`fixed inset-x-0 z-40 px-4 ${hasBottomNav ? "bottom-[4.75rem]" : "bottom-4"}`}>
@@ -139,10 +141,10 @@ export function InstallAppBanner() {
           <div className="flex flex-1 flex-col gap-0.5 text-right">
             <p className="text-sm font-black text-foreground">
               {state === "installed"
-                ? "اكتمل التثبيت — افتح التطبيق"
+                ? "تم التثبيت"
                 : state === "waiting"
                   ? "جاري التثبيت…"
-                  : "تثبيت التطبيق على الجوال"}
+                  : "تثبيت الآن"}
             </p>
             <p className="text-[11px] leading-relaxed text-muted-foreground">{subtitle}</p>
           </div>
@@ -173,7 +175,7 @@ export function InstallAppBanner() {
         {state === "waiting" ? (
           <Button className="w-full" disabled>
             <Loader2 className="h-4 w-4 animate-spin" />
-            جاري التنزيل والتثبيت…
+            جاري التثبيت…
           </Button>
         ) : state === "installed" ? (
           <Button className="w-full" onClick={openInstalledApp}>
@@ -183,20 +185,17 @@ export function InstallAppBanner() {
         ) : (
           <Button className="w-full" onClick={() => void onInstallClick()}>
             <Download className="h-4 w-4" />
-            تثبيت التطبيق
+            تثبيت الآن
           </Button>
         )}
 
-        {showSteps && state !== "waiting" && state !== "installed" && (
+        {showSteps && state !== "ready" && state !== "waiting" && state !== "installed" && (
           <>
             <ManualInstallSteps kind={manualKind} />
             <Button variant="outline" className="w-full" onClick={() => void copyPageLink()}>
               <Copy className="h-4 w-4" />
               {copied ? "تم نسخ الرابط" : "نسخ رابط التطبيق"}
             </Button>
-            <p className="text-center text-[10px] text-muted-foreground">
-              التثبيت عبر المتصفح (PWA). إن لم يظهر موجّه النظام فخطوات القائمة أعلاه هي المسار الصحيح.
-            </p>
           </>
         )}
       </div>
@@ -230,7 +229,7 @@ function ManualInstallSteps({ kind }: { kind: ReturnType<typeof detectInstallMan
       <ol className="flex flex-col gap-1 rounded-xl bg-secondary/50 p-2 text-[11px] leading-relaxed text-muted-foreground">
         <li className="flex items-center gap-1">
           <MoreVertical className="h-3 w-3 shrink-0 text-primary" />
-          Samsung Internet: القائمة ☰ → إضافة إلى الشاشة الرئيسية / تثبيت التطبيق.
+          القائمة ☰ → تثبيت التطبيق / إضافة إلى الشاشة الرئيسية.
         </li>
       </ol>
     );
@@ -239,21 +238,13 @@ function ManualInstallSteps({ kind }: { kind: ReturnType<typeof detectInstallMan
   if (kind === "huawei") {
     return (
       <ol className="flex flex-col gap-1 rounded-xl bg-secondary/50 p-2 text-[11px] leading-relaxed text-muted-foreground">
-        <li className="text-[10px] font-bold text-foreground">Huawei + Chrome — PWA فقط:</li>
         <li className="flex items-center gap-1">
           <MoreVertical className="h-3 w-3 shrink-0 text-primary" />
-          1) افتح هذا الرابط داخل Google Chrome (ليس متصفحًا مدمجًا).
-        </li>
-        <li className="flex items-center gap-1">
-          <MoreVertical className="h-3 w-3 shrink-0 text-primary" />
-          2) القائمة ⋮ → «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية».
+          Chrome ⋮ → «تثبيت التطبيق». إن ظهرت رسالة في الإشعارات افتحها واضغط إضافة.
         </li>
         <li className="flex items-center gap-1">
           <Check className="h-3 w-3 shrink-0 text-primary" />
-          3) بعد التأكيد افتح أيقونة «الفرز» من الشاشة الرئيسية.
-        </li>
-        <li className="text-[10px]">
-          إن ظهر تنزيل ملف بدل التثبيت، ألغِ التنزيل — هذا ليس مسار PWA الصحيح.
+          بعد الإضافة افتح أيقونة «الفرز» من الشاشة الرئيسية.
         </li>
       </ol>
     );
@@ -263,11 +254,11 @@ function ManualInstallSteps({ kind }: { kind: ReturnType<typeof detectInstallMan
     <ol className="flex flex-col gap-1 rounded-xl bg-secondary/50 p-2 text-[11px] leading-relaxed text-muted-foreground">
       <li className="flex items-center gap-1">
         <MoreVertical className="h-3 w-3 shrink-0 text-primary" />
-        قائمة المتصفح ⋮ → «تثبيت التطبيق» / «إضافة إلى الشاشة الرئيسية».
+        قائمة المتصفح ⋮ → «تثبيت التطبيق».
       </li>
       <li className="flex items-center gap-1">
         <Plus className="h-3 w-3 shrink-0 text-primary" />
-        لا تستخدم صفحة تنزيل APK إلا إذا طلبت ذلك صراحةً.
+        تجنّب تنزيل APK إلا إذا طُلب ذلك صراحة.
       </li>
     </ol>
   );
