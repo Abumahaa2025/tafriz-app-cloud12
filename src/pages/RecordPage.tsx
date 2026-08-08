@@ -37,8 +37,10 @@ import {
   isAppVoiceSupported,
   parseAppVoiceCommand,
   startAppVoice,
+  normArVoice,
   AppVoiceOverlay,
 } from "@/lib/app-voice";
+import { pushVoiceDebug } from "@/lib/voice-debug";
 import { createSpeechPlateBuffer } from "@/lib/speech-plate";
 import { playSoftUiSound } from "@/lib/soft-ui-sound";
 import {
@@ -325,10 +327,12 @@ export default function RecordPage({
   function commitPlateLookup(query: string) {
     if (!hasCheckFile || checkIndex.size === 0) {
       showNotice("ارفع ملف التشيك أولًا من تبويب التشيك");
+      pushVoiceDebug({ source: "record", intent: "plate_check", execution: "no_check_file" });
       stopListening("command");
       return;
     }
     if (!query) {
+      pushVoiceDebug({ source: "record", intent: "plate_check", execution: "empty_query" });
       stopListening("command");
       return;
     }
@@ -336,6 +340,12 @@ export default function RecordPage({
     if (result.status === "exact") {
       setFound(result.row);
       showNotice("وُجدت اللوحة");
+      pushVoiceDebug({
+        source: "record",
+        normalized: query,
+        intent: "plate_check",
+        execution: `exact:${result.row.plate}`,
+      });
       stopListening("command");
       return;
     }
@@ -345,25 +355,50 @@ export default function RecordPage({
         `لم يُعثر على الرقم المطلوب (${result.query})، وُجد رقم قريب الشبه: ${result.row.plate}`,
         5500
       );
+      pushVoiceDebug({
+        source: "record",
+        normalized: query,
+        intent: "plate_check",
+        execution: `similar:${result.row.plate}`,
+      });
       stopListening("command");
       return;
     }
     showNotice("لم تُوجد مطابقة — أعد المحاولة بوضوح");
-    // بعد كل عملية أمر صوتي يعود الزر لوضعه الطبيعي
+    pushVoiceDebug({
+      source: "record",
+      normalized: query,
+      intent: "plate_check",
+      execution: "not_found",
+    });
     stopListening("command");
   }
 
   function handleTranscript(transcript: string, alternatives: string[]) {
     setLastHeard(transcript);
-    const pool = [transcript, ...alternatives];
+    const pool = [...new Set([transcript, ...alternatives].map((s) => s.trim()).filter(Boolean))];
+
+    pushVoiceDebug({
+      source: "record",
+      raw: pool.join(" | "),
+      finalSpeech: transcript,
+      normalized: normArVoice(transcript),
+    });
 
     for (const alt of pool) {
       const action = parseAppVoiceCommand(alt);
       if (!action) continue;
-      if (action.type === "plate_check") continue;
+
+      pushVoiceDebug({
+        source: "record",
+        finalSpeech: alt,
+        normalized: normArVoice(alt),
+        intent: `${action.type}:${action.label}`,
+      });
 
       if (action.type === "help") {
         showNotice(appVoiceHelpText(), 5500);
+        pushVoiceDebug({ source: "record", intent: "help", execution: "ok" });
         stopListening("command");
         return;
       }
@@ -372,14 +407,23 @@ export default function RecordPage({
         showNotice(`تم: ${action.label}`);
         stopListening("command");
         onNavigateTab?.(action.tab);
+        pushVoiceDebug({
+          source: "record",
+          intent: `navigate_tab:${action.tab}`,
+          execution: "ok",
+        });
         return;
       }
 
       if (action.type === "open_overlay") {
         const ok = openOverlay(action.target);
         if (ok) showNotice(`تم: ${action.label}`);
-        // سواء نجح أو رُفض — إنهاء الجلسة والعودة للوضع الطبيعي
         stopListening("command");
+        pushVoiceDebug({
+          source: "record",
+          intent: `open_overlay:${action.target}`,
+          execution: ok ? "ok" : "blocked",
+        });
         return;
       }
 
@@ -387,6 +431,20 @@ export default function RecordPage({
         showNotice("بدء التسجيل الصوتي");
         stopListening("command");
         void startRecording();
+        pushVoiceDebug({ source: "record", intent: "audio_record", execution: "ok" });
+        return;
+      }
+
+      if (action.type === "plate_check") {
+        // تنفيذ فعلي — لا تتخطَّ plate_check (كان السبب: نص يظهر بلا بحث)
+        const q = action.candidates[0] || alt;
+        pushVoiceDebug({
+          source: "record",
+          intent: "plate_check",
+          normalized: q,
+          execution: "lookup",
+        });
+        commitPlateLookup(q);
         return;
       }
     }
@@ -399,13 +457,24 @@ export default function RecordPage({
     plateCommitRef.current = setTimeout(() => {
       const q = plateBufRef.current.value;
       if (!q) {
-        if (transcript.trim().length >= 2) {
+        if (transcript.trim().length >= 1) {
           showNotice("حاول إدخال أحرف منفصلة أو رقم — أو قل: افتح الفرز / التشيك / الخرائط");
         }
-        // بعد محاولة الأمر غير المفهومة يعود الزر طبيعيًا
+        pushVoiceDebug({
+          source: "record",
+          finalSpeech: transcript,
+          intent: "none",
+          execution: "no_match",
+        });
         stopListening("command");
         return;
       }
+      pushVoiceDebug({
+        source: "record",
+        normalized: q,
+        intent: "plate_buffer",
+        execution: "lookup",
+      });
       commitPlateLookup(q);
     }, 1400);
   }
