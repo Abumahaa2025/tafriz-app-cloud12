@@ -1,9 +1,11 @@
 import * as React from "react";
-import { Download, X, Share, Plus, MoreVertical, Check, Copy } from "lucide-react";
+import { Download, X, Share, Plus, MoreVertical, Check, Copy, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/context/AuthContext";
 import {
   detectInstallManualKind,
   InstallState,
+  rememberInstallOpened,
   rememberPromptDismissed,
   wasPromptDismissedRecently,
   watchInstallAvailability,
@@ -11,10 +13,13 @@ import {
 
 /**
  * تثبيت PWA فقط.
+ * - يظهر من أول فتح للتطبيق (شاشة الدخول) على الجوال.
+ * - أثناء التثبيت يبقى شريط التنزيل ظاهرًا ثم يتحول إلى «فتح التطبيق».
  * - «تثبيت الآن» يظهر فقط عند وجود beforeinstallprompt (ready).
  * - لا redirect إلى Chrome Intent ولا إلى install.html/APK من هذا البانر.
  */
 export function InstallAppBanner() {
+  const { user } = useAuth();
   const [state, setState] = React.useState<InstallState>("unavailable");
   const [hidden, setHidden] = React.useState(() => wasPromptDismissedRecently());
   const [showSteps, setShowSteps] = React.useState(false);
@@ -22,6 +27,7 @@ export function InstallAppBanner() {
   const [copied, setCopied] = React.useState(false);
   const installRef = React.useRef<null | (() => Promise<string>)>(null);
   const manualKind = React.useMemo(() => detectInstallManualKind(), []);
+  const hasBottomNav = user?.status === "approved";
 
   React.useEffect(() => {
     const watcher = watchInstallAvailability(setState);
@@ -36,7 +42,7 @@ export function InstallAppBanner() {
     if (
       state === "manual" ||
       state === "use-chrome" ||
-      (manualKind === "huawei" && state !== "ready" && state !== "installed")
+      (manualKind === "huawei" && state !== "ready" && state !== "waiting" && state !== "installed")
     ) {
       setShowSteps(true);
     }
@@ -53,6 +59,13 @@ export function InstallAppBanner() {
       // ignore
     }
   }, []);
+
+  // أثناء التنزيل أو بعد التثبيت: أظهر الشريط حتى لو كان المستخدم قد أخفى التذكير سابقًا
+  React.useEffect(() => {
+    if (state === "waiting" || state === "installed") {
+      setHidden(false);
+    }
+  }, [state]);
 
   if (state === "unavailable") return null;
   if (hidden && !forceHelp) return null;
@@ -73,35 +86,46 @@ export function InstallAppBanner() {
     }
   }
 
+  function openInstalledApp() {
+    rememberInstallOpened();
+    window.location.assign("/?source=pwa");
+  }
+
   const subtitle =
     state === "ready"
-      ? "التثبيت المباشر متاح من المتصفح (PWA). لن يتم تنزيل ملف APK."
+      ? "ثبّت «الفرز» على الجوال لفتحه كتطبيق من الشاشة الرئيسية (PWA — بدون APK)."
       : state === "waiting"
-        ? "تم قبول موجّه النظام — بانتظار تأكيد التثبيت الفعلي…"
+        ? "جاري تنزيل/تثبيت التطبيق… لا تغلق هذه الشاشة حتى يظهر زر الفتح."
         : state === "installed"
-          ? "تم التثبيت بنجاح. افتح الأيقونة من الشاشة الرئيسية."
+          ? "اكتمل التثبيت. اضغط «فتح التطبيق» أو افتح أيقونة «الفرز» من الشاشة الرئيسية."
           : manualKind === "huawei"
             ? "على هذا الجهاز قد لا يتوفر زر التثبيت المباشر. اتبع خطوات Chrome بالأسفل (PWA فقط — ليس APK)."
             : "إن لم يظهر «تثبيت الآن» فالتثبيت اليدوي من قائمة المتصفح هو المسار الصحيح.";
 
   return (
-    <div className="fixed inset-x-0 bottom-[4.75rem] z-20 px-4">
+    <div className={`fixed inset-x-0 z-40 px-4 ${hasBottomNav ? "bottom-[4.75rem]" : "bottom-4"}`}>
       <div className="mx-auto flex max-w-md flex-col gap-2 rounded-2xl border border-primary/25 bg-background/95 p-3 shadow-lg backdrop-blur">
         <div className="flex items-start gap-2">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10">
             {state === "installed" ? (
               <Check className="h-4 w-4 text-primary" />
+            ) : state === "waiting" ? (
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
             ) : (
               <Download className="h-4 w-4 text-primary" />
             )}
           </span>
           <div className="flex flex-1 flex-col gap-0.5 text-right">
             <p className="text-sm font-black text-foreground">
-              {state === "installed" ? "تم تثبيت «الفرز»" : "تثبيت التطبيق"}
+              {state === "installed"
+                ? "تم تثبيت «الفرز»"
+                : state === "waiting"
+                  ? "جاري التثبيت…"
+                  : "تثبيت التطبيق على الجوال"}
             </p>
             <p className="text-[11px] leading-relaxed text-muted-foreground">{subtitle}</p>
           </div>
-          {state !== "waiting" && state !== "installed" && (
+          {state !== "waiting" && (
             <button
               type="button"
               onClick={dismiss}
@@ -112,6 +136,18 @@ export function InstallAppBanner() {
             </button>
           )}
         </div>
+
+        {state === "waiting" && (
+          <div
+            className="h-2 w-full overflow-hidden rounded-full bg-primary/15"
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label="تقدم التثبيت"
+          >
+            <div className="install-progress-bar h-full w-1/3 rounded-full bg-primary" />
+          </div>
+        )}
 
         {state === "ready" ? (
           <Button
@@ -127,10 +163,11 @@ export function InstallAppBanner() {
           </Button>
         ) : state === "waiting" ? (
           <Button className="w-full" disabled>
-            بانتظار تأكيد النظام…
+            <Loader2 className="h-4 w-4 animate-spin" />
+            جاري التنزيل والتثبيت…
           </Button>
         ) : state === "installed" ? (
-          <Button className="w-full" onClick={() => window.location.assign("/?source=pwa")}>
+          <Button className="w-full" onClick={openInstalledApp}>
             <Check className="h-4 w-4" />
             فتح التطبيق
           </Button>
@@ -154,6 +191,15 @@ export function InstallAppBanner() {
           </>
         )}
       </div>
+      <style>{`
+        @keyframes install-progress-slide {
+          0% { transform: translateX(-120%); }
+          100% { transform: translateX(320%); }
+        }
+        .install-progress-bar {
+          animation: install-progress-slide 1.35s ease-in-out infinite;
+        }
+      `}</style>
     </div>
   );
 }
