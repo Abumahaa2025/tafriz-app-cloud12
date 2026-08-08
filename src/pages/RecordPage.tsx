@@ -116,6 +116,11 @@ export default function RecordPage({
   const maxTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const tickTimerRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
   const intervalTimerRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
+  /** يمنع تراكب getCurrentPosition أثناء الوضع التلقائي أو الطلبات البطيئة */
+  const gpsInFlightRef = React.useRef(false);
+  /** يُزاد عند الإيقاف/unmount لتجاهل callbacks متأخرة */
+  const gpsRequestGenRef = React.useRef(0);
+  const recordingRef = React.useRef(false);
 
   function updateProfile(patch: Partial<FieldRecordingProfile>) {
     setFieldProfile((prev) => {
@@ -123,6 +128,39 @@ export default function RecordPage({
       saveFieldProfile(next);
       return next;
     });
+  }
+
+  function showNotice(msg: string, ms = 3200) {
+    setNotice(msg);
+    if (tipTimer.current) clearTimeout(tipTimer.current);
+    tipTimer.current = setTimeout(() => {
+      setNotice((prev) => (prev === msg ? null : prev));
+    }, ms);
+  }
+
+  function gpsFailureMessage(
+    code: number | undefined,
+    whileRecording: boolean
+  ): string {
+    if (code === 1 /* PERMISSION_DENIED */) {
+      return whileRecording
+        ? "تم رفض إذن الموقع، سيستمر التسجيل بدون GPS."
+        : "تم رفض إذن الموقع.";
+    }
+    if (code === 3 /* TIMEOUT */) {
+      return whileRecording
+        ? "تعذر تحديد الموقع في الوقت المحدد، سيستمر التسجيل بدون GPS."
+        : "تعذر تحديد الموقع في الوقت المحدد.";
+    }
+    // POSITION_UNAVAILABLE أو غير معروف
+    return whileRecording
+      ? "تعذر تحديد الموقع، سيستمر التسجيل بدون GPS."
+      : "تعذر تحديد الموقع.";
+  }
+
+  function invalidateGpsRequests() {
+    gpsRequestGenRef.current += 1;
+    gpsInFlightRef.current = false;
   }
 
   function clearGpsWatchers() {
@@ -138,12 +176,30 @@ export default function RecordPage({
       clearTimeout(maxTimerRef.current);
       maxTimerRef.current = null;
     }
+    // لا يمكن إلغاء getCurrentPosition — نتجاهل أي callback لاحق
+    invalidateGpsRequests();
   }
 
   function captureGpsPoint() {
-    if (!navigator.geolocation) return;
+    // طلب واحد فقط في الهواء في أي لحظة
+    if (gpsInFlightRef.current) return;
+
+    const whileRecording = recordingRef.current;
+
+    if (!navigator.geolocation) {
+      if (whileRecording) {
+        showNotice("تعذر تحديد الموقع، سيستمر التسجيل بدون GPS.");
+      }
+      return;
+    }
+
+    const gen = gpsRequestGenRef.current;
+    gpsInFlightRef.current = true;
+
     navigator.geolocation.getCurrentPosition(
       (pos) => {
+        if (gpsRequestGenRef.current !== gen) return;
+        gpsInFlightRef.current = false;
         const point = {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
@@ -156,7 +212,14 @@ export default function RecordPage({
         });
         setStreetCoords({ lat: point.lat, lng: point.lng });
       },
-      () => setAudioError("تعذّر قراءة GPS — امنح إذن الموقع")
+      (err) => {
+        if (gpsRequestGenRef.current !== gen) return;
+        gpsInFlightRef.current = false;
+        // لا يوقف التسجيل — تنبيه عبر آلية notice الحالية فقط
+        showNotice(gpsFailureMessage(err?.code, whileRecording || recordingRef.current));
+      },
+      // timeout ضروري لتمييز TIMEOUT؛ لا يغيّر interval الالتقاط الدوري
+      { timeout: 15_000, maximumAge: 0 }
     );
   }
 
@@ -230,14 +293,6 @@ export default function RecordPage({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  function showNotice(msg: string, ms = 3200) {
-    setNotice(msg);
-    if (tipTimer.current) clearTimeout(tipTimer.current);
-    tipTimer.current = setTimeout(() => {
-      setNotice((prev) => (prev === msg ? null : prev));
-    }, ms);
-  }
 
   /** يعيد زر الأوامر الصوتية لوضعه الطبيعي بعد الأمر أو الإيقاف اليدوي */
   function stopListening(reason: "manual" | "command" | "cleanup" = "manual") {
@@ -412,6 +467,8 @@ export default function RecordPage({
       chunksRef.current = [];
       setGpsPoints([]);
       pendingPointsRef.current = [];
+      // جلسة GPS جديدة — لا تُخلط مع طلبات سابقة معلّقة
+      invalidateGpsRequests();
       recordStartedAt.current = Date.now();
       setElapsedMs(0);
       recorder.ondataavailable = (e) => {
@@ -446,6 +503,7 @@ export default function RecordPage({
         recorder.start();
       }
       mediaRecorderRef.current = recorder;
+      recordingRef.current = true;
       setRecording(true);
       captureGpsPoint();
       tickTimerRef.current = setInterval(() => {
@@ -473,6 +531,7 @@ export default function RecordPage({
         // بعض المتصفحات ترمي إن أُوقف مرتين
       }
     }
+    recordingRef.current = false;
     setRecording(false);
     clearGpsWatchers();
   }
