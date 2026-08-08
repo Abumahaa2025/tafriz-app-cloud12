@@ -96,7 +96,15 @@ function plateLettersOrdered(raw: string): string {
   const seenBlocks = new Set<string>();
 
   for (const t of n.split(/\s+/)) {
-    if (/^[\u0600-\u06FFa-z]$/i.test(t)) ordered.push(t.toLowerCase());
+    // حرف مفرد: «م» «ب»
+    if (/^[\u0600-\u06FFa-z]$/i.test(t)) {
+      ordered.push(t.toLowerCase());
+      continue;
+    }
+    // كتلة حروف مفصولة بمسافة عن الرقم: «مون 3642» → مون
+    if (/^[\u0600-\u06FFa-z]{2,3}$/i.test(t)) {
+      for (const ch of t) ordered.push(ch.toLowerCase());
+    }
   }
 
   for (const m of n.matchAll(/[0-9]+([\u0600-\u06FFa-z]{1,3})|([\u0600-\u06FFa-z]{1,3})[0-9]+/gi)) {
