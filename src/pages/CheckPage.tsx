@@ -221,7 +221,7 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
     return "exact";
   }
 
-  /** بحث حي أثناء الكلام — يحدّث النتيجة دون إيقاف الميكروفون */
+  /** بحث حي أثناء الكلام — يحدّث البطاقة الظاهرة دون فتح نافذة تغطي الشاشة */
   function tryIncrementalLookup(raw: string): boolean {
     const q = (speechToPlateToken(raw) || raw).trim();
     if (!q) return false;
@@ -236,7 +236,7 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
     });
     if (result.status === "none" || result.status === "need_digits") return false;
     setFound(result.row);
-    setDetailOpen(true);
+    // لا تفتح الـ modal هنا — النتيجة تظهر بجانب زر الميكروفون مباشرة
     setSpeechError(null);
     return true;
   }
@@ -281,11 +281,17 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
       mode: "command",
       onPartial: (transcript, candidates) => {
         setInterim(transcript);
-        for (const c of [speechToPlateToken(transcript), ...candidates]) {
-          if (!c) continue;
+        // الأطول أولًا: «مو»/«مون» قبل «م» حتى لا تُثبَّت نتيجة الحرف الأول فقط
+        const ranked = [
+          speechToPlateToken(transcript),
+          ...candidates,
+          transcript.trim(),
+        ]
+          .filter(Boolean)
+          .sort((a, b) => b.length - a.length);
+        for (const c of ranked) {
           if (tryIncrementalLookup(c)) return;
         }
-        if (transcript.trim()) tryIncrementalLookup(transcript);
       },
       onFinal: (transcript, candidates) => {
         pushVoiceDebug({
@@ -567,11 +573,25 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
       )}
 
       {checking && (
-        <p className="text-center text-xs text-muted-foreground">
-          {interim
-            ? "يسمع: " + interim
-            : "جاري التشيك — انطق المقاطع بالترتيب (12 ثم 35) وسيُجمّع الرقم قبل البحث"}
-        </p>
+        <div className="flex flex-col gap-2 rounded-xl border border-primary/25 bg-primary/10 px-3 py-3 text-center">
+          <p className="text-xs text-muted-foreground">
+            {interim
+              ? "يسمع: " + interim
+              : "جاري التشيك — انطق حرفًا حرفًا أو الرقم، والنتيجة تظهر فورًا هنا"}
+          </p>
+          {found ? (
+            <button
+              type="button"
+              onClick={() => setDetailOpen(true)}
+              className="rounded-xl bg-background px-3 py-3"
+            >
+              <p className="text-xl font-black text-primary">{found.plate}</p>
+              <p className="mt-1 text-[11px] font-bold text-muted-foreground">موجود — اضغط للتفاصيل</p>
+            </button>
+          ) : (
+            <p className="text-[11px] font-bold text-muted-foreground">بانتظار تطابق…</p>
+          )}
+        </div>
       )}
       {speechError && (
         <div
