@@ -142,7 +142,6 @@ export default function RecordPage({
     code: number | undefined,
     whileRecording: boolean
   ): string {
-    const cont = whileRecording ? "، سيستمر التسجيل بدون GPS." : ".";
     if (code === 1 /* PERMISSION_DENIED */) {
       return whileRecording
         ? "تم رفض إذن الموقع، سيستمر التسجيل بدون GPS."
@@ -156,7 +155,7 @@ export default function RecordPage({
     // POSITION_UNAVAILABLE أو غير معروف
     return whileRecording
       ? "تعذر تحديد الموقع، سيستمر التسجيل بدون GPS."
-      : `تعذر تحديد الموقع${cont}`;
+      : "تعذر تحديد الموقع.";
   }
 
   function invalidateGpsRequests() {
