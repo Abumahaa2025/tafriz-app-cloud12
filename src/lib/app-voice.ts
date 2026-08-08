@@ -1,4 +1,14 @@
 import { speechToPlateCandidates } from "./speech-plate";
+import {
+  applySpeechLang,
+  getSpeechRecognitionCtor,
+  isFatalSpeechError,
+  isSoftSpeechError,
+  isSpeechRecognitionApiSupported,
+  messageForSpeechError,
+  safeStopRecognition,
+  type SpeechRecognitionLike,
+} from "./speech-recognition-api";
 
 export type AppVoiceTab = "sort" | "maps" | "check" | "record";
 export type AppVoiceOverlay = "home" | "account" | "privacy" | "database" | "admin" | "ai-scan";
@@ -9,32 +19,6 @@ export type AppVoiceAction =
   | { type: "plate_check"; candidates: string[]; label: string }
   | { type: "audio_record"; label: string }
   | { type: "help"; label: string };
-
-type SpeechRecognitionLike = {
-  lang: string;
-  continuous: boolean;
-  interimResults: boolean;
-  maxAlternatives: number;
-  start: () => void;
-  stop: () => void;
-  abort: () => void;
-  onresult: ((ev: SpeechRecognitionEventLike) => void) | null;
-  onerror: ((ev: { error: string }) => void) | null;
-  onend: (() => void) | null;
-};
-
-type SpeechAlt = { transcript: string; confidence?: number };
-
-type SpeechRecognitionEventLike = {
-  resultIndex: number;
-  results: ArrayLike<
-    {
-      isFinal: boolean;
-      length: number;
-      [index: number]: SpeechAlt;
-    } & { 0: SpeechAlt }
-  >;
-};
 
 function normAr(raw: string): string {
   return String(raw ?? "")
@@ -145,7 +129,7 @@ export function appVoiceHelpText(): string {
 }
 
 export function isAppVoiceSupported(): boolean {
-  return typeof window !== "undefined" && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  return isSpeechRecognitionApiSupported();
 }
 
 /** جلسة أوامر صوتية شاملة — أقوى من تشيك اللوحات (بدائل أكثر + إعادة تشغيل سلسة) */
@@ -155,21 +139,42 @@ export function startAppVoice(opts: {
   onError?: (message: string) => void;
   onEnd?: () => void;
 }): { stop: () => void } | null {
-  const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const Ctor = getSpeechRecognitionCtor();
   if (!Ctor) {
-    opts.onError?.("المتصفح لا يدعم التعرف الصوتي");
+    opts.onError?.("المتصفح لا يدعم التعرف الصوتي — استخدم الأزرار للتنقل");
     return null;
   }
 
   const rec = new Ctor() as SpeechRecognitionLike;
-  rec.lang = "ar-SA";
+  applySpeechLang(rec, "ar-SA");
   rec.continuous = true;
   rec.interimResults = true;
   rec.maxAlternatives = 8;
   let stopped = false;
+  let restarting = false;
   let restartTimer: ReturnType<typeof setTimeout> | null = null;
+  let endedNotified = false;
+
+  const notifyEnd = () => {
+    if (endedNotified) return;
+    endedNotified = true;
+    opts.onEnd?.();
+  };
+
+  const finish = () => {
+    if (stopped) {
+      notifyEnd();
+      return;
+    }
+    stopped = true;
+    restarting = false;
+    if (restartTimer) clearTimeout(restartTimer);
+    safeStopRecognition(rec);
+    notifyEnd();
+  };
 
   rec.onresult = (ev) => {
+    if (stopped) return;
     let interim = "";
     for (let i = ev.resultIndex; i < ev.results.length; i++) {
       const result = ev.results[i];
@@ -178,6 +183,7 @@ export function startAppVoice(opts: {
         const n = Math.max(1, result.length || 1);
         for (let a = 0; a < n; a++) {
           const t = result[a]?.transcript?.trim();
+          // اقبل النتائج بأي لغة — لا تفترض العربية فقط
           if (t) alts.push(t);
         }
         if (alts.length) opts.onFinal(alts[0], alts);
@@ -189,30 +195,35 @@ export function startAppVoice(opts: {
   };
 
   rec.onerror = (ev) => {
-    if (ev.error === "aborted" || ev.error === "no-speech" || ev.error === "audio-capture") return;
-    if (ev.error === "network") {
-      opts.onError?.("التعرف الصوتي يحتاج اتصال إنترنت — أعد المحاولة");
+    const error = String(ev.error || "");
+    if (isSoftSpeechError(error)) {
+      // no-speech / aborted: أعد عبر onend إن لم تُوقف الجلسة
       return;
     }
-    opts.onError?.(
-      ev.error === "not-allowed"
-        ? "يرجى السماح باستخدام الميكروفون"
-        : `خطأ في التعرف الصوتي: ${ev.error}`
-    );
+    if (isFatalSpeechError(error)) {
+      opts.onError?.(messageForSpeechError(error));
+      finish();
+      return;
+    }
+    opts.onError?.(messageForSpeechError(error));
+    finish();
   };
 
   rec.onend = () => {
     if (stopped) {
-      opts.onEnd?.();
+      notifyEnd();
       return;
     }
     if (restartTimer) clearTimeout(restartTimer);
     restartTimer = setTimeout(() => {
-      if (stopped) return;
+      if (stopped || restarting) return;
+      restarting = true;
       try {
         rec.start();
       } catch {
-        opts.onEnd?.();
+        finish();
+      } finally {
+        restarting = false;
       }
     }, 220);
   };
@@ -220,24 +231,14 @@ export function startAppVoice(opts: {
   try {
     rec.start();
   } catch {
-    opts.onError?.("تعذّر بدء الأوامر الصوتية");
+    opts.onError?.("تعذّر بدء الأوامر الصوتية — استخدم الأزرار للتنقل");
+    finish();
     return null;
   }
 
   return {
     stop: () => {
-      stopped = true;
-      if (restartTimer) clearTimeout(restartTimer);
-      try {
-        rec.onend = null;
-        rec.stop();
-      } catch {
-        try {
-          rec.abort();
-        } catch {
-          // ignore
-        }
-      }
+      finish();
     },
   };
 }

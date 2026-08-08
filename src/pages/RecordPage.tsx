@@ -362,6 +362,9 @@ export default function RecordPage({
       showNotice("التعرف الصوتي غير مدعوم هنا — استخدم الأزرار للتنقل");
       return;
     }
+    // أوقف أي جلسة سابقة لتفادي سباق الضغط المزدوج / listening loop
+    speechRef.current?.stop();
+    speechRef.current = null;
     const handle = startAppVoice({
       onFinal: handleTranscript,
       onInterim: setInterim,
@@ -377,7 +380,10 @@ export default function RecordPage({
         speechRef.current = null;
       },
     });
-    if (!handle) return;
+    if (!handle) {
+      setListening(false);
+      return;
+    }
     speechRef.current = handle;
     setListening(true);
   }
