@@ -56,12 +56,29 @@ function displayModeNow(): string {
 export function isRunningStandalone(): boolean {
   if (typeof window === "undefined") return false;
   const mm = (query: string) => !!window.matchMedia && window.matchMedia(query).matches;
+  // لا تعتمد على document.referrer === android-app:// — فتح الرابط من واتساب/تلغرام
+  // يعطي referrer بهذا الشكل فيُخفى زر التثبيت بالخطأ بينما المستخدم ما زال في المتصفح.
   return (
     mm("(display-mode: standalone)") ||
     mm("(display-mode: fullscreen)") ||
-    (window.navigator as Navigator & { standalone?: boolean }).standalone === true ||
-    document.referrer.startsWith("android-app://")
+    mm("(display-mode: minimal-ui)") ||
+    (window.navigator as Navigator & { standalone?: boolean }).standalone === true
   );
+}
+
+/** هل نعرض مسار التثبيت على هذا الجهاز (جوال في المتصفح)؟ */
+export function shouldOfferInstallUi(): boolean {
+  if (typeof window === "undefined") return false;
+  if (isRunningStandalone()) return false;
+  if (isIOSDevice()) return true;
+  if (typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent)) return true;
+  // شاشات لمس واسعة قد تكون جوالًا بدون Android في الـ UA
+  try {
+    if (navigator.maxTouchPoints > 0 && window.matchMedia("(max-width: 900px)").matches) return true;
+  } catch {
+    // ignore
+  }
+  return false;
 }
 
 export function isIOSDevice(): boolean {
@@ -167,158 +184,166 @@ function publishDebug(state: InstallState, extra?: Record<string, unknown>) {
 }
 
 /**
- * يراقب beforeinstallprompt.
+ * مراقب تثبيت واحد مشترك (singleton) حتى لا يتنازع أكثر من مكوّن على beforeinstallprompt.
  * لا يُعلَن التثبيت ناجحًا إلا بعد appinstalled أو standalone حقيقي.
  */
+type InstallListener = (state: InstallState) => void;
+
+let sharedDeferred: BeforeInstallPromptEvent | null = null;
+let sharedWaitingTimer: ReturnType<typeof setTimeout> | null = null;
+let sharedPollTimer: ReturnType<typeof setInterval> | null = null;
+let sharedCurrent: InstallState =
+  typeof window !== "undefined" && shouldOfferInstallUi() && !isRunningStandalone() ? "manual" : "unavailable";
+let sharedWatching = false;
+const sharedListeners = new Set<InstallListener>();
+
+function emitShared(next: InstallState) {
+  sharedCurrent = next;
+  if (next === "waiting" || next === "installed") writePersistedFlow(next);
+  else if (next === "unavailable" || next === "manual" || next === "use-chrome") writePersistedFlow(null);
+  publishDebug(next, { beforeinstallprompt: !!sharedDeferred });
+  for (const listener of sharedListeners) listener(next);
+}
+
+function stopSharedPoll() {
+  if (sharedPollTimer) {
+    clearInterval(sharedPollTimer);
+    sharedPollTimer = null;
+  }
+}
+
+function confirmSharedInstalled() {
+  if (sharedWaitingTimer) {
+    clearTimeout(sharedWaitingTimer);
+    sharedWaitingTimer = null;
+  }
+  stopSharedPoll();
+  sharedDeferred = null;
+  writePersistedFlow("installed");
+  pushInstallDebugEvent("appinstalled_or_standalone_confirmed");
+  publishDebug("installed", { appinstalled: true, beforeinstallprompt: false });
+  emitShared("installed");
+}
+
+function startSharedStandalonePoll() {
+  stopSharedPoll();
+  sharedPollTimer = setInterval(() => {
+    if (isRunningStandalone()) {
+      stopSharedPoll();
+      confirmSharedInstalled();
+    }
+  }, 700);
+}
+
+function computeShared() {
+  if (isRunningStandalone()) {
+    writePersistedFlow(null);
+    return emitShared("unavailable");
+  }
+  if (!shouldOfferInstallUi()) {
+    if (!sharedDeferred) return emitShared("unavailable");
+  }
+  if (sharedCurrent === "waiting" || sharedCurrent === "installed") return;
+  const persisted = readPersistedFlow();
+  if (persisted === "installed") return emitShared("installed");
+  if (persisted === "waiting") {
+    emitShared("waiting");
+    startSharedStandalonePoll();
+    return;
+  }
+  if (isIOSDevice()) return emitShared("manual");
+  if (isHuaweiFamilyDevice() || (typeof navigator !== "undefined" && /HuaweiBrowser/i.test(navigator.userAgent))) {
+    return emitShared(sharedDeferred ? "ready" : "manual");
+  }
+  if (isSamsungInternet()) {
+    return emitShared(sharedDeferred ? "ready" : "manual");
+  }
+  if (isOtherAndroidBrowser() && !sharedDeferred) return emitShared("manual");
+  emitShared(sharedDeferred ? "ready" : "manual");
+}
+
+function onSharedBeforeInstall(event: Event) {
+  event.preventDefault();
+  sharedDeferred = event as BeforeInstallPromptEvent;
+  pushInstallDebugEvent("beforeinstallprompt", "captured");
+  publishDebug(sharedCurrent, { beforeinstallprompt: true });
+  if (sharedCurrent !== "waiting" && sharedCurrent !== "installed") computeShared();
+}
+
+function onSharedInstalled() {
+  pushInstallDebugEvent("appinstalled", "browser_event");
+  publishDebug(sharedCurrent, { appinstalled: true });
+  confirmSharedInstalled();
+}
+
+async function sharedInstall(): Promise<"prompted" | "accepted" | "dismissed" | "unavailable"> {
+  pushInstallDebugEvent("install_click");
+  if (isRunningStandalone()) {
+    writePersistedFlow(null);
+    emitShared("unavailable");
+    return "unavailable";
+  }
+  if (!sharedDeferred) {
+    pushInstallDebugEvent("install_click_no_bip", "show_manual_steps");
+    computeShared();
+    return "unavailable";
+  }
+  const event = sharedDeferred;
+  sharedDeferred = null;
+  writePersistedFlow("waiting");
+  emitShared("waiting");
+  publishDebug("waiting", { promptCalled: true, beforeinstallprompt: false });
+  pushInstallDebugEvent("prompt_called");
+  startSharedStandalonePoll();
+  try {
+    await event.prompt();
+    const { outcome } = await event.userChoice;
+    publishDebug("waiting", { userChoice: outcome, promptCalled: true });
+    pushInstallDebugEvent("userChoice", outcome);
+    if (outcome === "accepted") {
+      if (sharedWaitingTimer) clearTimeout(sharedWaitingTimer);
+      sharedWaitingTimer = setTimeout(() => {
+        if (isRunningStandalone()) {
+          confirmSharedInstalled();
+          return;
+        }
+        pushInstallDebugEvent("accepted_still_waiting", "keep_progress_ui");
+      }, 12000);
+      return "accepted";
+    }
+    stopSharedPoll();
+    writePersistedFlow(null);
+    emitShared("manual");
+    return "dismissed";
+  } catch (err) {
+    stopSharedPoll();
+    writePersistedFlow(null);
+    pushInstallDebugEvent("prompt_error", err instanceof Error ? err.message : "unknown");
+    emitShared("manual");
+    return "unavailable";
+  }
+}
+
+function ensureSharedWatch() {
+  if (sharedWatching || typeof window === "undefined") return;
+  sharedWatching = true;
+  window.addEventListener("beforeinstallprompt", onSharedBeforeInstall);
+  window.addEventListener("appinstalled", onSharedInstalled);
+  pushInstallDebugEvent("watch_start");
+  computeShared();
+}
+
 export function watchInstallAvailability(
   onChange: (state: InstallState) => void
 ): { install: () => Promise<"prompted" | "accepted" | "dismissed" | "unavailable">; stop: () => void } {
-  let deferred: BeforeInstallPromptEvent | null = null;
-  let waitingTimer: ReturnType<typeof setTimeout> | null = null;
-  let pollTimer: ReturnType<typeof setInterval> | null = null;
-  let current: InstallState = "manual";
-
-  const setState = (next: InstallState) => {
-    current = next;
-    if (next === "waiting" || next === "installed") writePersistedFlow(next);
-    else if (next === "unavailable" || next === "manual" || next === "use-chrome") writePersistedFlow(null);
-    // ready: لا تمس مسار الجلسة (waiting/installed) إن وُجد
-    publishDebug(next, { beforeinstallprompt: !!deferred });
-    onChange(next);
-  };
-
-  const stopPoll = () => {
-    if (pollTimer) {
-      clearInterval(pollTimer);
-      pollTimer = null;
-    }
-  };
-
-  const startStandalonePoll = () => {
-    stopPoll();
-    pollTimer = setInterval(() => {
-      if (isRunningStandalone()) {
-        stopPoll();
-        confirmInstalled();
-      }
-    }, 700);
-  };
-
-  const compute = () => {
-    if (isRunningStandalone()) {
-      writePersistedFlow(null);
-      return setState("unavailable");
-    }
-    if (current === "waiting" || current === "installed") return;
-    const persisted = readPersistedFlow();
-    if (persisted === "installed") return setState("installed");
-    if (persisted === "waiting") {
-      setState("waiting");
-      startStandalonePoll();
-      return;
-    }
-    if (isIOSDevice()) return setState("manual");
-    // Huawei: تعليمات PWA يدوية — لا redirect إلى Chrome كمسار أساسي
-    if (isHuaweiFamilyDevice() || (typeof navigator !== "undefined" && /HuaweiBrowser/i.test(navigator.userAgent))) {
-      return setState(deferred ? "ready" : "manual");
-    }
-    if (isSamsungInternet()) {
-      return setState(deferred ? "ready" : "manual");
-    }
-    // متصفحات أخرى ضعيفة: تعليمات يدوية فقط — لا redirect تلقائي إلى Chrome/APK
-    if (isOtherAndroidBrowser() && !deferred) return setState("manual");
-    setState(deferred ? "ready" : "manual");
-  };
-
-  const confirmInstalled = () => {
-    if (waitingTimer) {
-      clearTimeout(waitingTimer);
-      waitingTimer = null;
-    }
-    stopPoll();
-    deferred = null;
-    writePersistedFlow("installed");
-    pushInstallDebugEvent("appinstalled_or_standalone_confirmed");
-    publishDebug("installed", { appinstalled: true, beforeinstallprompt: false });
-    // ابقَ على «installed» حتى يضغط المستخدم «فتح التطبيق» أو يغلق التذكير — لا اختفاء تلقائي
-    setState("installed");
-  };
-
-  const onBeforeInstall = (event: Event) => {
-    event.preventDefault();
-    deferred = event as BeforeInstallPromptEvent;
-    pushInstallDebugEvent("beforeinstallprompt", "captured");
-    publishDebug(current, { beforeinstallprompt: true });
-    if (current !== "waiting" && current !== "installed") compute();
-  };
-
-  const onInstalled = () => {
-    pushInstallDebugEvent("appinstalled", "browser_event");
-    publishDebug(current, { appinstalled: true });
-    confirmInstalled();
-  };
-
-  window.addEventListener("beforeinstallprompt", onBeforeInstall);
-  window.addEventListener("appinstalled", onInstalled);
-  pushInstallDebugEvent("watch_start");
-  compute();
-
+  sharedListeners.add(onChange);
+  ensureSharedWatch();
+  onChange(sharedCurrent);
   return {
-    async install() {
-      pushInstallDebugEvent("install_click");
-      if (isRunningStandalone()) {
-        writePersistedFlow(null);
-        setState("unavailable");
-        return "unavailable";
-      }
-      if (!deferred) {
-        pushInstallDebugEvent("install_click_no_bip", "show_manual_steps");
-        compute();
-        return "unavailable";
-      }
-      const event = deferred;
-      deferred = null;
-      writePersistedFlow("waiting");
-      setState("waiting");
-      publishDebug("waiting", { promptCalled: true, beforeinstallprompt: false });
-      pushInstallDebugEvent("prompt_called");
-      startStandalonePoll();
-      try {
-        await event.prompt();
-        const { outcome } = await event.userChoice;
-        publishDebug("waiting", { userChoice: outcome, promptCalled: true });
-        pushInstallDebugEvent("userChoice", outcome);
-        if (outcome === "accepted") {
-          // ابقَ على شريط التنزيل ظاهرًا حتى appinstalled / standalone — بدون الرجوع لـ manual
-          if (waitingTimer) clearTimeout(waitingTimer);
-          waitingTimer = setTimeout(() => {
-            if (isRunningStandalone()) {
-              confirmInstalled();
-              return;
-            }
-            // إن تأخر حدث النظام نُبقي waiting ونُسجّل فقط — الواجهة لا تختفي
-            pushInstallDebugEvent("accepted_still_waiting", "keep_progress_ui");
-          }, 12000);
-          return "accepted";
-        }
-        stopPoll();
-        writePersistedFlow(null);
-        setState("manual");
-        return "dismissed";
-      } catch (err) {
-        stopPoll();
-        writePersistedFlow(null);
-        pushInstallDebugEvent("prompt_error", err instanceof Error ? err.message : "unknown");
-        setState("manual");
-        return "unavailable";
-      }
-    },
+    install: sharedInstall,
     stop() {
-      if (waitingTimer) clearTimeout(waitingTimer);
-      stopPoll();
-      window.removeEventListener("beforeinstallprompt", onBeforeInstall);
-      window.removeEventListener("appinstalled", onInstalled);
-      pushInstallDebugEvent("watch_stop");
+      sharedListeners.delete(onChange);
+      // نبقي المراقب العام حيًا طالما التطبيق مفتوح — حتى يعود مكوّن التثبيت بسرعة
     },
   };
 }

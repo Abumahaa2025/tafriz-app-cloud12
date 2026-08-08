@@ -27,6 +27,7 @@ import {
   PASSWORD_RULE_HINT,
   passwordStrengthLabel,
 } from "@/lib/password-strength";
+import { LoginInstallCard } from "@/components/LoginInstallCard";
 
 type Mode = "signin" | "signup";
 
@@ -162,7 +163,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col justify-center bg-gradient-to-b from-secondary/50 via-background to-background px-6 py-10">
+    <div className="flex min-h-screen flex-col justify-center bg-gradient-to-b from-secondary/50 via-background to-background px-6 py-10 pb-36">
       <div className="mx-auto flex w-full max-w-md flex-col gap-5">
         <div className="flex justify-center">
           <div className="flex items-center gap-1.5 rounded-full bg-secondary px-3 py-1.5 text-primary">
@@ -186,6 +187,8 @@ export default function LoginPage() {
             </p>
           </div>
         </div>
+
+        <LoginInstallCard />
 
         <Card className="shadow-lg">
           <CardContent className="flex flex-col gap-4 pt-6">
