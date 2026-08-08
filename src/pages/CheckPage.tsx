@@ -37,7 +37,11 @@ import {
   lookupPlate,
   lookupPlateVoiceDetailed,
 } from "@/lib/check-engine";
-import { isSpeechRecognitionSupported, startPlateSpeech } from "@/lib/speech-plate";
+import {
+  isSpeechRecognitionSupported,
+  speechToPlateToken,
+  startPlateSpeech,
+} from "@/lib/speech-plate";
 import { playSoftUiSound } from "@/lib/soft-ui-sound";
 import { pushVoiceDebug } from "@/lib/voice-debug";
 
@@ -217,6 +221,26 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
     return "exact";
   }
 
+  /** بحث حي أثناء الكلام — يحدّث النتيجة دون إيقاف الميكروفون */
+  function tryIncrementalLookup(raw: string): boolean {
+    const q = (speechToPlateToken(raw) || raw).trim();
+    if (!q) return false;
+    const result = lookupPlateVoiceDetailed(index, q);
+    pushVoiceDebug({
+      source: "check",
+      phase: "incremental_lookup",
+      displayed: raw,
+      normalized: q,
+      intent: "plate_lookup_partial",
+      execution: result.status,
+    });
+    if (result.status === "none" || result.status === "need_digits") return false;
+    setFound(result.row);
+    setDetailOpen(true);
+    setSpeechError(null);
+    return true;
+  }
+
   function openFoundDetails(row: CheckSheetRow) {
     setFound(row);
     setDetailOpen(true);
@@ -255,6 +279,14 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
     speechRef.current = null;
     const handle = startPlateSpeech({
       mode: "command",
+      onPartial: (transcript, candidates) => {
+        setInterim(transcript);
+        for (const c of [speechToPlateToken(transcript), ...candidates]) {
+          if (!c) continue;
+          if (tryIncrementalLookup(c)) return;
+        }
+        if (transcript.trim()) tryIncrementalLookup(transcript);
+      },
       onFinal: (transcript, candidates) => {
         pushVoiceDebug({
           source: "check",
@@ -283,6 +315,11 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
             return;
           }
         }
+        // آخر محاولة بالنص الكامل (مون 3640)
+        if (tryLookup(transcript, true) || tryLookup(speechToPlateToken(transcript), true)) {
+          returnToReady({ playDone: true });
+          return;
+        }
         if (candidates.some((c) => c && c.length >= 1) || transcript.trim().length >= 1) {
           const tip = "لم تُوجد مطابقة — أعد الضغط وانطق الحروف أو الرقم بوضوح";
           setSpeechError(tip);
@@ -310,14 +347,6 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
       },
       onInterim: (t) => {
         setInterim(t);
-        pushVoiceDebug({
-          source: "check",
-          phase: "ui_interim",
-          displayed: t,
-          raw: t,
-          finalSpeech: "",
-          isFinal: false,
-        });
       },
       onError: (msg) => {
         setSpeechError(msg);
