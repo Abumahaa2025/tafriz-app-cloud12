@@ -40,6 +40,44 @@ function MainApp() {
     if (overlay === "admin" && !user?.isOwner) setOverlay(null);
   }, [overlay, user?.isOwner]);
 
+  // فتح صفحة الحساب من إشعار data.open === "account"
+  React.useEffect(() => {
+    const openAccount = () => setOverlay("account");
+
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("open") === "account") {
+        openAccount();
+        params.delete("open");
+        const next = params.toString();
+        const path = window.location.pathname + (next ? `?${next}` : "") + window.location.hash;
+        window.history.replaceState({}, "", path);
+      }
+    } catch {
+      // ignore
+    }
+
+    const onCustom = (event: Event) => {
+      const detail = (event as CustomEvent<{ open?: string }>).detail;
+      if (detail?.open === "account") openAccount();
+    };
+    window.addEventListener("tafriz:notification-open", onCustom);
+
+    const onSwMessage = (event: MessageEvent) => {
+      if (event.data?.type === "OPEN_ACCOUNT") openAccount();
+    };
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.addEventListener("message", onSwMessage);
+    }
+
+    return () => {
+      window.removeEventListener("tafriz:notification-open", onCustom);
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.removeEventListener("message", onSwMessage);
+      }
+    };
+  }, []);
+
   return (
     <div className="min-h-screen bg-background">
       <FeedbackNotifyWatcher />

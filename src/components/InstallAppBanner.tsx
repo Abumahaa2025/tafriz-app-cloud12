@@ -95,7 +95,7 @@ export function InstallAppBanner() {
               <>
                 <li className="flex items-center gap-1">
                   <Share className="h-3 w-3 shrink-0 text-primary" />
-                  اضغط زر المشاركة في شريط Safari الأسفل.
+                  اضغط زر المشاركة في المتصفح (Share).
                 </li>
                 <li className="flex items-center gap-1">
                   <Plus className="h-3 w-3 shrink-0 text-primary" />

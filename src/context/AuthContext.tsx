@@ -1,7 +1,7 @@
 import * as React from "react";
 import { backend } from "@/lib/backend";
 import { AppUser, BackendError, IdentifierType } from "@/lib/backend-types";
-import { ensureNotificationPermission } from "@/lib/feedback-notify";
+import { showAppNotification } from "@/lib/feedback-notify";
 import { getSupportPhones } from "@/lib/support-contact";
 
 interface AuthContextValue {
@@ -38,34 +38,14 @@ async function notifyAccountRevoked(user: AppUser) {
     // ignore
   }
 
+  // عرض فقط إن كان الإذن ممنوحًا مسبقًا — لا طلب تلقائي ولا إشعار مزدوج
   try {
-    if (!(await ensureNotificationPermission())) return;
-    try {
-      if ("serviceWorker" in navigator) {
-        const reg = await navigator.serviceWorker.ready;
-        await reg.showNotification("تم إيقاف حسابك — تواصل مع الإدارة", {
-          body,
-          tag: `account-revoked-${user.id}`,
-          dir: "rtl",
-          lang: "ar",
-          requireInteraction: true,
-        });
-      }
-    } catch {
-      // ignore
-    }
-    try {
-      new Notification("تم إيقاف حسابك — تواصل مع الإدارة", {
-        body,
-        tag: `account-revoked-${user.id}`,
-        dir: "rtl",
-        lang: "ar",
-        requireInteraction: true,
-      });
-    } catch {
-      // ignore
-    }
-    if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
+    await showAppNotification({
+      title: "تم إيقاف حسابك — تواصل مع الإدارة",
+      body,
+      tag: `account-revoked-${user.id}`,
+      open: "account",
+    });
   } catch {
     // ignore
   }

@@ -8,17 +8,22 @@ self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim(
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
+  const openTarget = event.notification && event.notification.data && event.notification.data.open;
+  const url = openTarget === "account" ? "/?open=account" : "/";
   event.waitUntil(
     (async () => {
       const all = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
       for (const client of all) {
         if ("focus" in client) {
           await client.focus();
+          if (openTarget === "account" && "postMessage" in client) {
+            client.postMessage({ type: "OPEN_ACCOUNT" });
+          }
           return;
         }
       }
       if (self.clients.openWindow) {
-        await self.clients.openWindow("/");
+        await self.clients.openWindow(url);
       }
     })()
   );

@@ -7,7 +7,7 @@ import { backend } from "@/lib/backend";
 import { FeedbackItem } from "@/lib/backend-types";
 import { getSupportPhones } from "@/lib/support-contact";
 import { useAuth } from "@/context/AuthContext";
-import { ensureNotificationPermission } from "@/lib/feedback-notify";
+import { requestNotificationPermission } from "@/lib/feedback-notify";
 
 /** محادثة واحدة مستمرة للمستخدم — تدمج الرسائل القديمة إن تفرّقت thread_id */
 function groupAsOneConversation(items: FeedbackItem[]): {
@@ -45,7 +45,6 @@ export function ContactAdminCard() {
 
   React.useEffect(() => {
     refresh();
-    ensureNotificationPermission().catch(() => {});
     const onVis = () => {
       if (document.visibilityState === "visible") refresh();
     };
@@ -59,6 +58,8 @@ export function ContactAdminCard() {
 
   async function handleSend() {
     if (!message.trim() || !user) return;
+    // مسار إيماءة المستخدم لطلب إذن الإشعارات (عبر الدالة المركزية فقط)
+    void requestNotificationPermission();
     const existingThreadId = threads[0]?.threadId;
     await backend.submitFeedback(user.identifier, message.trim(), existingThreadId);
     setMessage("");
@@ -82,6 +83,8 @@ export function ContactAdminCard() {
       setOpenThreadId(null);
       return;
     }
+    // مسار إيماءة المستخدم لطلب إذن الإشعارات (مرة واحدة عبر الدالة المركزية)
+    void requestNotificationPermission();
     setOpenThreadId(threadId);
     await backend.markFeedbackThreadReadByUser(threadId);
     await refresh();

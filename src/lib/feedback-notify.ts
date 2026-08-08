@@ -5,6 +5,8 @@ const SEEN_USER_KEY = "tafriz_feedback_notify_seen_user_v2";
 const BASELINE_OWNER_KEY = "tafriz_feedback_notify_baseline_owner_v2";
 const BASELINE_USER_KEY = "tafriz_feedback_notify_baseline_user_v2";
 
+export type NotificationPermissionState = "unsupported" | "granted" | "denied" | "default";
+
 function loadSeen(key: string): Set<string> {
   try {
     const raw = localStorage.getItem(key);
@@ -27,10 +29,26 @@ function setBaseline(key: string) {
   localStorage.setItem(key, "1");
 }
 
-export async function ensureNotificationPermission(): Promise<boolean> {
-  if (typeof window === "undefined" || !("Notification" in window)) return false;
-  if (Notification.permission === "granted") return true;
-  if (Notification.permission === "denied") return false;
+export function getNotificationPermissionState(): NotificationPermissionState {
+  if (typeof window === "undefined" || !("Notification" in window)) return "unsupported";
+  const p = Notification.permission;
+  if (p === "granted" || p === "denied" || p === "default") return p;
+  return "unsupported";
+}
+
+export function canShowNotifications(): boolean {
+  return getNotificationPermissionState() === "granted";
+}
+
+/**
+ * المسار المركزي الوحيد لطلب إذن الإشعارات.
+ * يُستدعى فقط من إيماءة مستخدم (click/tap) — لا من useEffect/تسجيل الدخول.
+ * إذا كان الإذن denied أو API غير موجودة لا يُعاد الطلب.
+ */
+export async function requestNotificationPermission(): Promise<boolean> {
+  const state = getNotificationPermissionState();
+  if (state === "unsupported" || state === "denied") return false;
+  if (state === "granted") return true;
   try {
     const res = await Notification.requestPermission();
     return res === "granted";
@@ -39,49 +57,81 @@ export async function ensureNotificationPermission(): Promise<boolean> {
   }
 }
 
-async function showPhoneNotification(title: string, body: string, tag: string): Promise<boolean> {
-  if (!(await ensureNotificationPermission())) return false;
+/**
+ * فحص فقط — لا يطلب إذنًا.
+ * الاسم القديم يُبقى للتوافق؛ السلوك لم يعد يطلب تلقائيًا.
+ */
+export async function ensureNotificationPermission(): Promise<boolean> {
+  return canShowNotifications();
+}
 
+export type AppNotificationOpen = "account";
+
+/**
+ * يعرض إشعارًا واحدًا فقط لنفس الحدث (بدون ازدواج SW + Notification).
+ * لا يطلب إذنًا — إن لم يكن ممنوحًا يعود false.
+ */
+export async function showAppNotification(opts: {
+  title: string;
+  body: string;
+  tag: string;
+  open?: AppNotificationOpen;
+}): Promise<boolean> {
+  if (!canShowNotifications()) return false;
+
+  const data = opts.open ? { open: opts.open } : undefined;
   let ok = false;
 
-  // 1) Notification المباشر — أوضح على كثير من أجهزة أندرويد/TWA
-  try {
-    const n = new Notification(title, {
-      body,
-      tag,
-      dir: "rtl",
-      lang: "ar",
-      requireInteraction: true,
-    });
-    n.onclick = () => {
-      try {
-        window.focus();
-      } catch {
-        // ignore
-      }
-      n.close();
-    };
-    ok = true;
-  } catch {
-    // ignore
-  }
-
-  // 2) عبر Service Worker كمسار إضافي
+  // تفضيل Service Worker عند توفره (أنسب لـ PWA)، وإلا Notification المباشر
   try {
     if ("serviceWorker" in navigator) {
       const reg = await navigator.serviceWorker.ready;
-      await reg.showNotification(title, {
-        body,
-        tag,
+      await reg.showNotification(opts.title, {
+        body: opts.body,
+        tag: opts.tag,
         dir: "rtl",
         lang: "ar",
         requireInteraction: true,
-        data: { open: "account" },
+        data,
       });
       ok = true;
     }
   } catch {
-    // ignore
+    // نجرب المسار المباشر أدناه
+  }
+
+  if (!ok) {
+    try {
+      const n = new Notification(opts.title, {
+        body: opts.body,
+        tag: opts.tag,
+        dir: "rtl",
+        lang: "ar",
+        requireInteraction: true,
+        data,
+      });
+      n.onclick = () => {
+        try {
+          window.focus();
+        } catch {
+          // ignore
+        }
+        if (opts.open === "account") {
+          try {
+            const url = new URL(window.location.href);
+            url.searchParams.set("open", "account");
+            window.history.replaceState({}, "", url.toString());
+            window.dispatchEvent(new CustomEvent("tafriz:notification-open", { detail: { open: "account" } }));
+          } catch {
+            // ignore
+          }
+        }
+        n.close();
+      };
+      ok = true;
+    } catch {
+      return false;
+    }
   }
 
   try {
@@ -91,6 +141,10 @@ async function showPhoneNotification(title: string, body: string, tag: string): 
   }
 
   return ok;
+}
+
+async function showPhoneNotification(title: string, body: string, tag: string): Promise<boolean> {
+  return showAppNotification({ title, body, tag, open: "account" });
 }
 
 /**

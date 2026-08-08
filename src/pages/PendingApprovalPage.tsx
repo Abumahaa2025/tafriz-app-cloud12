@@ -16,7 +16,7 @@ import { useAuth } from "@/context/AuthContext";
 import { getSupportPhones } from "@/lib/support-contact";
 import { backend } from "@/lib/backend";
 import { FeedbackItem } from "@/lib/backend-types";
-import { ensureNotificationPermission } from "@/lib/feedback-notify";
+import { requestNotificationPermission } from "@/lib/feedback-notify";
 
 export default function PendingApprovalPage() {
   const { user, signOut, refresh } = useAuth();
@@ -53,7 +53,6 @@ export default function PendingApprovalPage() {
       refreshChat().catch(() => {});
     };
     tick();
-    ensureNotificationPermission().catch(() => {});
     const interval = setInterval(tick, 3000);
     return () => clearInterval(interval);
   }, [refresh, refreshChat]);
@@ -100,6 +99,8 @@ export default function PendingApprovalPage() {
 
   async function sendToAdmin(text: string) {
     if (!user || !text.trim()) return;
+    // مسار إيماءة المستخدم لطلب إذن الإشعارات (عبر الدالة المركزية فقط)
+    void requestNotificationPermission();
     setSendBusy(true);
     setSendNotice(null);
     try {
