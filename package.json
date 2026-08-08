@@ -29,7 +29,10 @@
     "react-dom": "^18.3.1",
     "tailwind-merge": "^2.3.0",
     "tailwindcss-animate": "^1.0.7",
-    "xlsx": "^0.18.5"
+    "xlsx": "npm:@e965/xlsx@^0.20.3"
+  },
+  "overrides": {
+    "nanoid": "3.3.17"
   },
   "devDependencies": {
     "@capacitor/android": "^6.1.2",
