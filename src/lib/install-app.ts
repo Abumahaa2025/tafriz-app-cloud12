@@ -1,8 +1,10 @@
 /**
  * تثبيت التطبيق من داخل التطبيق نفسه (PWA).
  * لا يعتمد على APK ولا على Capacitor لهذا المسار.
+ * على Huawei/Chrome: لا نخدع المستخدم بواجهة Desktop إن لم تتوفر.
  */
 import { loadLocal, saveLocal } from "./storage";
+import { pushInstallDebugEvent, setInstallDebugPatch } from "./install-debug";
 
 const DISMISSED_KEY = "install_prompt_dismissed_at";
 /** إخفاء التذكير أسبوعًا بعد رفضه — تنبيه لا يُلاحق المستخدم. */
@@ -13,6 +15,20 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
 }
 
+function displayModeNow(): string {
+  if (typeof window === "undefined") return "unknown";
+  for (const m of ["standalone", "fullscreen", "minimal-ui", "browser"] as const) {
+    try {
+      if (window.matchMedia(`(display-mode: ${m})`).matches) return m;
+    } catch {
+      // ignore
+    }
+  }
+  const nav = window.navigator as Navigator & { standalone?: boolean };
+  if (nav.standalone === true) return "ios-standalone";
+  return "browser";
+}
+
 /** هل التطبيق يعمل الآن كتطبيق مستقل (مثبّت) لا كصفحة في متصفح؟ */
 export function isRunningStandalone(): boolean {
   if (typeof window === "undefined") return false;
@@ -20,9 +36,7 @@ export function isRunningStandalone(): boolean {
   return (
     mm("(display-mode: standalone)") ||
     mm("(display-mode: fullscreen)") ||
-    // Safari على iOS
     (window.navigator as Navigator & { standalone?: boolean }).standalone === true ||
-    // غلاف TWA يضع هذا المُحيل، فالمستخدم داخل التطبيق فعلًا
     document.referrer.startsWith("android-app://")
   );
 }
@@ -40,7 +54,7 @@ export function isSamsungInternet(): boolean {
   return /SamsungBrowser/i.test(navigator.userAgent);
 }
 
-/** جهاز Huawei/Honor (حتى مع Chrome) — تجربة beforeinstallprompt غالبًا متأخرة/غائبة */
+/** جهاز Huawei/Honor (حتى مع Chrome) */
 export function isHuaweiFamilyDevice(): boolean {
   if (typeof navigator === "undefined") return false;
   const ua = navigator.userAgent;
@@ -48,20 +62,19 @@ export function isHuaweiFamilyDevice(): boolean {
 }
 
 /**
- * متصفح أندرويد غير Chrome/Samsung — توجيه اختياري لـ Chrome عندما
- * التثبيت الأصلي غير موثوق.
+ * متصفح أندرويد غير Chrome/Samsung/Huawei — قد يُقترح Chrome كخيار ثانوي فقط.
+ * HuaweiBrowser يُعامل بمسار Huawei اليدوي (PWA) لا redirect صامت.
  */
 export function isOtherAndroidBrowser(): boolean {
   if (typeof navigator === "undefined") return false;
   const ua = navigator.userAgent;
   if (!/Android/i.test(ua)) return false;
-  if (/SamsungBrowser/i.test(ua)) return false; // له مسار تعليمات خاص
-  return /MiuiBrowser|HeyTapBrowser|OppoBrowser|VivoBrowser|HuaweiBrowser|UCBrowser|YaBrowser|OPR\//.test(
-    ua
-  );
+  if (/SamsungBrowser/i.test(ua)) return false;
+  if (isHuaweiFamilyDevice() || /HuaweiBrowser/i.test(ua)) return false;
+  return /MiuiBrowser|HeyTapBrowser|OppoBrowser|VivoBrowser|UCBrowser|YaBrowser|OPR\//.test(ua);
 }
 
-/** يفتح نفس الصفحة في Chrome على أندرويد. */
+/** يفتح نفس الصفحة في Chrome على أندرويد — لا يُستخدم كمسار افتراضي لـ Huawei. */
 export function chromeIntentUrl(): string {
   const { host, pathname } = window.location;
   return `intent://${host}${pathname}#Intent;scheme=https;package=com.android.chrome;end`;
@@ -77,14 +90,6 @@ export function rememberPromptDismissed(): void {
   saveLocal(DISMISSED_KEY, Date.now());
 }
 
-/**
- * - unavailable: يعمل standalone فعلًا أو أُخفي التذكير
- * - ready: beforeinstallprompt متاح → زر تثبيت أصلي
- * - waiting: المستخدم قبل موجّه النظام — ننتظر appinstalled / standalone
- * - installed: تأكيد فعلي عبر appinstalled أو display-mode
- * - manual: تعليمات يدوية حسب الجهاز
- * - use-chrome: متصفح أندرويد ضعيف التثبيت → اقترح Chrome
- */
 export type InstallState =
   | "unavailable"
   | "ready"
@@ -101,13 +106,33 @@ export function detectInstallManualKind(): InstallManualKind {
   const ua = navigator.userAgent;
   if (!/Android/i.test(ua)) return "desktop";
   if (isSamsungInternet()) return "samsung";
-  if (isHuaweiFamilyDevice()) return "huawei";
+  if (isHuaweiFamilyDevice() || /HuaweiBrowser/i.test(ua)) return "huawei";
   return "android";
 }
 
+function publishDebug(state: InstallState, extra?: Record<string, unknown>) {
+  setInstallDebugPatch({
+    installState: state,
+    isStandalone: isRunningStandalone(),
+    displayMode: displayModeNow(),
+    isIOS: isIOSDevice(),
+    isSamsung: isSamsungInternet(),
+    isHuawei: isHuaweiFamilyDevice(),
+    manualKind: detectInstallManualKind(),
+    ua: typeof navigator !== "undefined" ? navigator.userAgent : "",
+    referrer: typeof document !== "undefined" ? document.referrer || "" : "",
+    ...(extra as Partial<{
+      beforeinstallprompt: boolean;
+      promptCalled: boolean;
+      userChoice: string | null;
+      appinstalled: boolean;
+    }>),
+  });
+}
+
 /**
- * يراقب `beforeinstallprompt` ويرجع دالة تشغيل الموجّه.
- * لا يُعلَن التثبيت ناجحًا إلا بعد appinstalled أو التحقق من standalone.
+ * يراقب beforeinstallprompt.
+ * لا يُعلَن التثبيت ناجحًا إلا بعد appinstalled أو standalone حقيقي.
  */
 export function watchInstallAvailability(
   onChange: (state: InstallState) => void
@@ -118,6 +143,7 @@ export function watchInstallAvailability(
 
   const setState = (next: InstallState) => {
     current = next;
+    publishDebug(next, { beforeinstallprompt: !!deferred });
     onChange(next);
   };
 
@@ -125,13 +151,15 @@ export function watchInstallAvailability(
     if (isRunningStandalone()) return setState("unavailable");
     if (current === "waiting" || current === "installed") return;
     if (isIOSDevice()) return setState("manual");
-    // Samsung Internet: تعليمات خاصة — لا نفترض مطابقة Chrome
+    // Huawei: تعليمات PWA يدوية — لا redirect إلى Chrome كمسار أساسي
+    if (isHuaweiFamilyDevice() || (typeof navigator !== "undefined" && /HuaweiBrowser/i.test(navigator.userAgent))) {
+      return setState(deferred ? "ready" : "manual");
+    }
     if (isSamsungInternet()) {
       return setState(deferred ? "ready" : "manual");
     }
-    // متصفحات أندرويد أخرى ضعيفة: اقترح Chrome إن لم يتوفر الموجّه
+    // متصفحات أخرى ضعيفة فقط — اقتراح Chrome كخيار صريح (ليس تثبيتًا تلقائيًا)
     if (isOtherAndroidBrowser() && !deferred) return setState("use-chrome");
-    // Huawei + Chrome: إن وُجد BIP استخدمه، وإلا تعليمات Huawei واضحة
     setState(deferred ? "ready" : "manual");
   };
 
@@ -141,8 +169,9 @@ export function watchInstallAvailability(
       waitingTimer = null;
     }
     deferred = null;
+    pushInstallDebugEvent("appinstalled_or_standalone_confirmed");
+    publishDebug("installed", { appinstalled: true, beforeinstallprompt: false });
     setState("installed");
-    // أخفِ بعد لحظة قصيرة حتى يرى المستخدم التأكيد الحقيقي فقط
     window.setTimeout(() => {
       if (isRunningStandalone() || current === "installed") {
         setState("unavailable");
@@ -153,50 +182,60 @@ export function watchInstallAvailability(
   const onBeforeInstall = (event: Event) => {
     event.preventDefault();
     deferred = event as BeforeInstallPromptEvent;
+    pushInstallDebugEvent("beforeinstallprompt", "captured");
+    publishDebug(current, { beforeinstallprompt: true });
     if (current !== "waiting" && current !== "installed") compute();
   };
 
   const onInstalled = () => {
+    pushInstallDebugEvent("appinstalled", "browser_event");
+    publishDebug(current, { appinstalled: true });
     confirmInstalled();
   };
 
   window.addEventListener("beforeinstallprompt", onBeforeInstall);
   window.addEventListener("appinstalled", onInstalled);
+  pushInstallDebugEvent("watch_start");
   compute();
 
   return {
     async install() {
+      pushInstallDebugEvent("install_click");
       if (isRunningStandalone()) {
         setState("unavailable");
         return "unavailable";
       }
       if (!deferred) {
+        pushInstallDebugEvent("install_click_no_bip", "show_manual_steps");
         compute();
         return "unavailable";
       }
       const event = deferred;
-      // الموجّه يُستهلك مرة واحدة فقط
       deferred = null;
       setState("waiting");
+      publishDebug("waiting", { promptCalled: true, beforeinstallprompt: false });
+      pushInstallDebugEvent("prompt_called");
       try {
         await event.prompt();
         const { outcome } = await event.userChoice;
+        publishDebug("waiting", { userChoice: outcome, promptCalled: true });
+        pushInstallDebugEvent("userChoice", outcome);
         if (outcome === "accepted") {
-          // لا نعلن التثبيت هنا — ننتظر appinstalled أو standalone
           if (waitingTimer) clearTimeout(waitingTimer);
           waitingTimer = setTimeout(() => {
             if (isRunningStandalone()) {
               confirmInstalled();
               return;
             }
-            // القبول دون تثبيت فعلي (شائع على بعض أجهزة Huawei) → تعليمات يدوية
+            pushInstallDebugEvent("accepted_but_not_standalone", "fallback_manual");
             setState("manual");
           }, 8000);
           return "accepted";
         }
-        setState(deferred ? "ready" : "manual");
+        setState("manual");
         return "dismissed";
-      } catch {
+      } catch (err) {
+        pushInstallDebugEvent("prompt_error", err instanceof Error ? err.message : "unknown");
         setState("manual");
         return "unavailable";
       }
@@ -205,6 +244,7 @@ export function watchInstallAvailability(
       if (waitingTimer) clearTimeout(waitingTimer);
       window.removeEventListener("beforeinstallprompt", onBeforeInstall);
       window.removeEventListener("appinstalled", onInstalled);
+      pushInstallDebugEvent("watch_stop");
     },
   };
 }

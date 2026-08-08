@@ -380,9 +380,12 @@ export default function RecordPage({
 
     pushVoiceDebug({
       source: "record",
+      phase: "parser_input",
+      displayed: transcript,
       raw: pool.join(" | "),
       finalSpeech: transcript,
       normalized: normArVoice(transcript),
+      intent: "pending",
     });
 
     for (const alt of pool) {
@@ -391,6 +394,8 @@ export default function RecordPage({
 
       pushVoiceDebug({
         source: "record",
+        phase: "intent",
+        displayed: transcript,
         finalSpeech: alt,
         normalized: normArVoice(alt),
         intent: `${action.type}:${action.label}`,

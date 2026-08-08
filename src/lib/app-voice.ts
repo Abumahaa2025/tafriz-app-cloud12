@@ -7,6 +7,7 @@ import {
   isSpeechRecognitionApiSupported,
   messageForSpeechError,
   safeStopRecognition,
+  selectedSpeechRecognitionApiName,
   type SpeechRecognitionLike,
 } from "./speech-recognition-api";
 import { pushVoiceDebug } from "./voice-debug";
@@ -144,10 +145,18 @@ export function startAppVoice(opts: {
   }
 
   const rec = new Ctor() as SpeechRecognitionLike;
-  applySpeechLang(rec, "ar-SA");
+  const locale = "ar-SA";
+  const speechApi = selectedSpeechRecognitionApiName() || "unknown";
+  applySpeechLang(rec, locale);
   rec.continuous = true;
   rec.interimResults = true;
   rec.maxAlternatives = 8;
+  pushVoiceDebug({
+    source: "app-voice",
+    phase: "session_start",
+    locale,
+    speechApi,
+  });
   let stopped = false;
   let restarting = false;
   /** يمنع تصفية نفس الـ interim مرتين؛ لا يحجب نتائج isFinal التالية */
@@ -170,9 +179,14 @@ export function startAppVoice(opts: {
     interimFlushed = true;
     pushVoiceDebug({
       source: "app-voice",
+      phase: "final_deliver",
       raw: alternatives.join(" | ") || text,
       finalSpeech: text,
+      displayed: text,
       normalized: normArVoice(text),
+      locale,
+      speechApi,
+      isFinal: true,
     });
     opts.onFinal(text, alternatives.length ? alternatives : [text]);
   };
@@ -222,13 +236,29 @@ export function startAppVoice(opts: {
     if (interim) {
       pendingInterim = interim.trim();
       interimFlushed = false;
-      pushVoiceDebug({ source: "app-voice", raw: pendingInterim });
+      pushVoiceDebug({
+        source: "app-voice",
+        phase: "interim",
+        raw: pendingInterim,
+        displayed: pendingInterim,
+        finalSpeech: "",
+        locale,
+        speechApi,
+        isFinal: false,
+      });
       opts.onInterim?.(interim);
     }
   };
 
   rec.onerror = (ev) => {
     const error = String(ev.error || "");
+    pushVoiceDebug({
+      source: "app-voice",
+      phase: "error",
+      error,
+      locale,
+      speechApi,
+    });
     if (isSoftSpeechError(error)) {
       return;
     }

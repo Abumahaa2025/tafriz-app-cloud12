@@ -7,6 +7,7 @@ import {
   isSpeechRecognitionApiSupported,
   messageForSpeechError,
   safeStopRecognition,
+  selectedSpeechRecognitionApiName,
 } from "./speech-recognition-api";
 import { pushVoiceDebug } from "./voice-debug";
 
@@ -427,11 +428,13 @@ export function startPlateSpeech(opts: {
   }
   const commandMode = (opts.mode ?? "command") === "command";
   const rec = new Ctor();
-  // ar-SA تفضيل؛ على بعض أجهزة Android المحرك قد يعيد نصًا دون isFinal
-  applySpeechLang(rec, "ar-SA");
+  const locale = "ar-SA";
+  const speechApi = selectedSpeechRecognitionApiName() || "unknown";
+  applySpeechLang(rec, locale);
   rec.continuous = true;
   rec.interimResults = true;
   rec.maxAlternatives = 5;
+  pushVoiceDebug({ source: "plate-speech", phase: "session_start", locale, speechApi });
   let stopped = false;
   let finished = false;
   let restarting = false;
@@ -450,11 +453,16 @@ export function startPlateSpeech(opts: {
     const unique = [...new Set(candidates.filter(Boolean))];
     pushVoiceDebug({
       source: "plate-speech",
+      phase: "final_deliver",
       raw: pendingInterim || heard,
+      displayed: heard,
       finalSpeech: heard,
       normalized: unique[0] || speechToPlateToken(heard),
       intent: "plate_lookup",
       execution: unique.length ? `candidates:${unique.join("|")}` : "empty",
+      locale,
+      speechApi,
+      isFinal: true,
     });
     opts.onFinal(heard, unique.length ? unique : [speechToPlateToken(heard)].filter(Boolean));
   };
@@ -509,8 +517,13 @@ export function startPlateSpeech(opts: {
         pendingInterim = "";
         pushVoiceDebug({
           source: "plate-speech",
+          phase: "engine_final",
           raw: transcripts.join(" | "),
           finalSpeech: transcripts[0],
+          displayed: transcripts[0],
+          locale,
+          speechApi,
+          isFinal: true,
         });
         const ranked = plateBuf.ingest(transcripts);
         const display = plateBuf.value ? plateBuf.chunks.join(" ") : transcripts[0];
@@ -534,13 +547,29 @@ export function startPlateSpeech(opts: {
     if (interim) {
       pendingInterim = interim.trim();
       lastHeardRaw = pendingInterim || lastHeardRaw;
-      pushVoiceDebug({ source: "plate-speech", raw: pendingInterim });
+      pushVoiceDebug({
+        source: "plate-speech",
+        phase: "interim",
+        raw: pendingInterim,
+        displayed: pendingInterim,
+        finalSpeech: "",
+        locale,
+        speechApi,
+        isFinal: false,
+      });
       opts.onInterim?.(interim);
     }
   };
 
   rec.onerror = (ev) => {
     const error = String(ev.error || "");
+    pushVoiceDebug({
+      source: "plate-speech",
+      phase: "error",
+      error,
+      locale,
+      speechApi,
+    });
     if (isSoftSpeechError(error)) {
       return;
     }

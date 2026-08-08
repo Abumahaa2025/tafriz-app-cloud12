@@ -258,6 +258,8 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
       onFinal: (transcript, candidates) => {
         pushVoiceDebug({
           source: "check",
+          phase: "lookup_input",
+          displayed: transcript,
           raw: transcript,
           finalSpeech: transcript,
           normalized: candidates[0] || transcript,
@@ -270,6 +272,8 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
             setInterim("");
             pushVoiceDebug({
               source: "check",
+              phase: "lookup_result",
+              displayed: transcript,
               finalSpeech: transcript,
               normalized: c,
               intent: "plate_lookup",
@@ -285,6 +289,8 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
           window.setTimeout(() => setSpeechError((prev) => (prev === tip ? null : prev)), 3500);
           pushVoiceDebug({
             source: "check",
+            phase: "lookup_result",
+            displayed: transcript,
             finalSpeech: transcript,
             normalized: candidates.join("|"),
             intent: "plate_lookup",
@@ -293,6 +299,8 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
         } else {
           pushVoiceDebug({
             source: "check",
+            phase: "lookup_result",
+            displayed: transcript,
             finalSpeech: transcript,
             intent: "plate_lookup",
             execution: "empty",
@@ -302,11 +310,18 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
       },
       onInterim: (t) => {
         setInterim(t);
-        pushVoiceDebug({ source: "check", raw: t });
+        pushVoiceDebug({
+          source: "check",
+          phase: "ui_interim",
+          displayed: t,
+          raw: t,
+          finalSpeech: "",
+          isFinal: false,
+        });
       },
       onError: (msg) => {
         setSpeechError(msg);
-        pushVoiceDebug({ source: "check", execution: `error:${msg}` });
+        pushVoiceDebug({ source: "check", phase: "error", error: msg, execution: "error" });
         returnToReady();
       },
       onEnd: () => {
