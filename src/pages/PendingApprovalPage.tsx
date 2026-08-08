@@ -16,7 +16,7 @@ import { useAuth } from "@/context/AuthContext";
 import { getSupportPhones } from "@/lib/support-contact";
 import { backend } from "@/lib/backend";
 import { FeedbackItem } from "@/lib/backend-types";
-import { ensureNotificationPermission } from "@/lib/feedback-notify";
+import { requestNotificationPermission } from "@/lib/feedback-notify";
 
 export default function PendingApprovalPage() {
   const { user, signOut, refresh } = useAuth();
@@ -53,7 +53,6 @@ export default function PendingApprovalPage() {
       refreshChat().catch(() => {});
     };
     tick();
-    ensureNotificationPermission().catch(() => {});
     const interval = setInterval(tick, 3000);
     return () => clearInterval(interval);
   }, [refresh, refreshChat]);
@@ -223,7 +222,15 @@ export default function PendingApprovalPage() {
           variant={showInApp ? "default" : "outline"}
           size="lg"
           className="w-full"
-          onClick={() => setShowInApp((v) => !v)}
+          onClick={() => {
+            setShowInApp((v) => {
+              if (!v) {
+                // مسار إيماءة المستخدم لطلب إذن الإشعارات (عبر الدالة المركزية فقط)
+                void requestNotificationPermission();
+              }
+              return !v;
+            });
+          }}
         >
           <AppWindow className="h-5 w-5" />
           التواصل مع الإدارة عبر التطبيق

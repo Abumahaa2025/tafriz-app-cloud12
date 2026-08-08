@@ -2,11 +2,7 @@ import * as React from "react";
 import { useAuth } from "@/context/AuthContext";
 import { backend } from "@/lib/backend";
 import { OWNER_IDENTIFIER } from "@/lib/owner-config";
-import {
-  ensureNotificationPermission,
-  notifyOwnerNewFeedback,
-  notifyUserAdminReply,
-} from "@/lib/feedback-notify";
+import { notifyOwnerNewFeedback, notifyUserAdminReply } from "@/lib/feedback-notify";
 
 function isOwnerAccount(user: { isOwner?: boolean; identifier?: string } | null): boolean {
   if (!user) return false;
@@ -17,15 +13,11 @@ function isOwnerAccount(user: { isOwner?: boolean; identifier?: string } | null)
 
 /**
  * يراقب رسائل التواصل ويُظهر إشعار جوال عند وصول رسالة جديدة.
+ * لا يطلب إذن الإشعارات — الإذن يُطلب فقط من مسار إيماءة المستخدم المركزي.
  */
 export function FeedbackNotifyWatcher() {
   const { user } = useAuth();
   const owner = isOwnerAccount(user);
-
-  React.useEffect(() => {
-    if (!user) return;
-    ensureNotificationPermission().catch(() => {});
-  }, [user?.id]);
 
   React.useEffect(() => {
     if (!user) return;

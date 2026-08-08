@@ -90,6 +90,8 @@ export function watchInstallAvailability(
 
   const compute = () => {
     if (isRunningStandalone()) return onChange("unavailable");
+    // iPhone/iPad (بما فيها Chrome على iOS): خطوات إضافة للشاشة الرئيسية فقط — لا توجيه Chrome أندرويد
+    if (isIOSDevice()) return onChange("manual");
     // يُقدَّم على وجود الموجّه: سامسونج يوفّر موجّهًا لكنه ينتج اختصارًا لا تطبيقًا
     if (isNonChromeAndroidBrowser()) return onChange("use-chrome");
     onChange(deferred ? "ready" : "manual");
