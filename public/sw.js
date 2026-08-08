@@ -1,15 +1,20 @@
-// خدمة صغيرة تعمل في الخلفية لاستقبال الملفات التي يشاركها المستخدم من
-// تطبيقات ثانية (واتساب مثلًا) عبر قائمة "مشاركة" نظام أندرويد، بشرط أن يكون
-// هذا التطبيق مثبّتًا على الشاشة الرئيسية (Add to Home Screen) وأن الموقع
-// يعمل عبر HTTPS. لا يعمل هذا على آيفون لأن Safari لا يدعم Web Share Target.
+// Service Worker لتطبيق الفرز.
+// - يتحكّم بطلبات نفس الأصل (مطلوب لتثبيت WebAPK كتطبيق لا كاختصار ويب).
+// - يمرّر الشبكة مباشرة بدون كاش عدواني حتى لا تتجمّد التحديثات.
+// - يدعم Web Share Target عبر /import.
 
-self.addEventListener("install", () => self.skipWaiting());
-self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+self.addEventListener("install", (event) => {
+  event.waitUntil(self.skipWaiting());
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(self.clients.claim());
+});
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const openTarget = event.notification && event.notification.data && event.notification.data.open;
-  const url = openTarget === "account" ? "/?open=account" : "/";
+  const url = openTarget === "account" ? "/?open=account" : "/?source=pwa";
   event.waitUntil(
     (async () => {
       const all = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
@@ -52,6 +57,19 @@ self.addEventListener("fetch", (event) => {
         }
         return Response.redirect("/?imported=1", 303);
       })()
+    );
+    return;
+  }
+
+  // نفس الأصل فقط — الشبكة أولًا مع بقاء الـ SW متحكّمًا (شرط تثبيت كتطبيق)
+  if (url.origin === self.location.origin) {
+    event.respondWith(
+      fetch(event.request).catch(() => {
+        if (event.request.mode === "navigate") {
+          return Response.redirect(new URL("/?source=pwa", self.location.origin).href, 302);
+        }
+        return Response.error();
+      })
     );
   }
 });

@@ -9,11 +9,30 @@ import { initTheme } from "./lib/theme";
 initTheme();
 
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch(() => {
+  // سجّل مبكرًا حتى يتحكّم الـ SW بالصفحة قبل موجّه التثبيت (WebAPK كتطبيق)
+  void navigator.serviceWorker
+    .register("/sw.js", { updateViaCache: "none" })
+    .then(async (reg) => {
+      try {
+        await reg.update();
+      } catch {
+        // ignore
+      }
+      await navigator.serviceWorker.ready;
+      if (!navigator.serviceWorker.controller) {
+        try {
+          if (!sessionStorage.getItem("tafriz_sw_claim_reload")) {
+            sessionStorage.setItem("tafriz_sw_claim_reload", "1");
+            window.location.reload();
+          }
+        } catch {
+          // ignore
+        }
+      }
+    })
+    .catch(() => {
       // التسجيل يفشل بصمت على HTTP العادي (غير https) — هذا متوقع أثناء التطوير المحلي
     });
-  });
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

@@ -176,6 +176,18 @@ export function chromeIntentUrl(): string {
   return `intent://${host}${pathname}#Intent;scheme=https;package=com.android.chrome;end`;
 }
 
+/** حزمة أندرويد الحقيقية (APK) — احتياطي عندما يثبّت المتصفح اختصار ويب فقط. */
+export const ANDROID_APK_HREF = "/downloads/Tafriz.apk";
+
+export function isAndroidDevice(): boolean {
+  return typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
+}
+
+/** هل الجهاز يحتاج غالبًا مسار APK لأن WebAPK غير موثوق؟ */
+export function prefersAndroidApkInstall(): boolean {
+  return isAndroidDevice() && (isHuaweiFamilyDevice() || isOtherAndroidBrowser());
+}
+
 export function wasPromptDismissedRecently(): boolean {
   const at = loadLocal<number | null>(DISMISSED_KEY, null);
   if (!at) return false;
