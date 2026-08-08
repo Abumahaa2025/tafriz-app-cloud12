@@ -505,19 +505,23 @@ export default function RecordPage({
         setInterim(t);
         // بحث تدريجي أثناء الكلام (م→مو→مون / 3→36…) دون إيقاف الجلسة
         if (!hasCheckFile || checkIndex.size === 0) return;
-        const q = speechToPlateToken(t) || t.replace(/\s+/g, "").trim();
-        if (!q) return;
-        const result = lookupPlateVoiceDetailed(checkIndex, q);
-        pushVoiceDebug({
-          source: "record",
-          phase: "incremental_lookup",
-          displayed: t,
-          normalized: q,
-          intent: "plate_lookup_partial",
-          execution: result.status,
-        });
-        if (result.status === "exact" || result.status === "similar") {
-          setFound(result.row);
+        const ranked = [speechToPlateToken(t), t.replace(/\s+/g, "").trim()]
+          .filter(Boolean)
+          .sort((a, b) => b.length - a.length);
+        for (const q of ranked) {
+          const result = lookupPlateVoiceDetailed(checkIndex, q);
+          pushVoiceDebug({
+            source: "record",
+            phase: "incremental_lookup",
+            displayed: t,
+            normalized: q,
+            intent: "plate_lookup_partial",
+            execution: result.status,
+          });
+          if (result.status === "exact" || result.status === "similar") {
+            setFound(result.row);
+            return;
+          }
         }
       },
       onError: (m) => {

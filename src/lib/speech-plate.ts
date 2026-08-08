@@ -239,7 +239,13 @@ function resolveSpokenPart(part: string): string | null {
   p = p.replace(/ـ/g, "").replace(/[\u064B-\u065F\u0670]/g, "");
   p = p.replace(/[أإآٱ]/g, "ا").replace(/ة/g, "ه").replace(/ى/g, "ي");
   const lower = p.toLowerCase();
-  if (SKIP_WORDS.has(p) || SKIP_WORDS.has(lower)) return null;
+  // كلمات مثل «و» تُتخطّى في الجمل، لكن الحرف المفرد صالح للوحة
+  if (
+    (SKIP_WORDS.has(p) || SKIP_WORDS.has(lower)) &&
+    !/^[\u0600-\u06FFa-zA-Z]$/.test(p)
+  ) {
+    return null;
+  }
 
   p = stripAl(p);
   if (DIGIT_WORDS[p] != null) return DIGIT_WORDS[p];

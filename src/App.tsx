@@ -22,10 +22,10 @@ import { InstallAppBanner } from "@/components/InstallAppBanner";
 import { VoiceDebugPanel } from "@/components/VoiceDebugPanel";
 import { InstallDebugPanel } from "@/components/InstallDebugPanel";
 
-/** عناصر عائمة فوق التطبيق — لا تُعرض على شاشة الدخول حتى لا تغطي النموذج على الجوال */
+/** عناصر عائمة — فقط داخل التطبيق المعتمد (لا Login ولا انتظار الموافقة) */
 function AuthedChrome() {
   const { user, loading } = useAuth();
-  if (loading || !user) return null;
+  if (loading || !user || user.status !== "approved") return null;
   return (
     <>
       <RefreshAppButton />

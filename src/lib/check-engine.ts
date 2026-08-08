@@ -236,12 +236,18 @@ export type VoicePlateLookup =
  * - حرفًا حرفًا (سهص) أو مع الرقم (سهص5613) → نتيجة فورية
  * - عند غياب التطابق تُرجع أقرب رقم مشابه مع تنبيه
  */
+/** يزيل تطويل الحروف العربية الشائع في ASR: موو → مو (دون المساس بالأرقام) */
+function collapseArabicElongation(text: string): string {
+  return text.replace(/([\u0600-\u06FF])\1+/g, "$1");
+}
+
 export function lookupPlateVoiceDetailed(
   index: Map<string, CheckSheetRow>,
   query: string
 ): VoicePlateLookup {
-  const norm = normalizePlate(normalizeSearchText(String(query ?? "")).replace(/\s/g, ""));
-  const qSearch = normalizeSearchText(norm).replace(/\s/g, "");
+  const collapsed = collapseArabicElongation(String(query ?? ""));
+  const norm = normalizePlate(normalizeSearchText(collapsed).replace(/\s/g, ""));
+  const qSearch = collapseArabicElongation(normalizeSearchText(norm).replace(/\s/g, ""));
   if (!qSearch) return { status: "none", query: String(query ?? "") };
 
   const exactNorm = index.get(norm);
