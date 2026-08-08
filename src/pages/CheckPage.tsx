@@ -24,7 +24,7 @@ import { SortHistorySearchHit } from "@/lib/backend-types";
 import { matchesPlateStreet, normalizeSearchText } from "@/lib/search-text";
 import { parseSpreadsheet, ParsedSheet } from "@/lib/xlsx-utils";
 import { googleMapsOpenUrl } from "@/lib/map-coords";
-import { idbGet, idbRemove, idbSet } from "@/lib/idb";
+import { idbGet, idbRemove, idbSet, idbUserMessage, isIdbError } from "@/lib/idb";
 import {
   buildCheckSheet,
   CHECK_IDB_KEY,
@@ -72,19 +72,24 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
     Promise.all([
       idbGet<CheckSheetData>(CHECK_IDB_KEY),
       idbGet<ParsedSheet>(CHECK_PARSED_IDB_KEY),
-    ]).then(([saved, parsed]) => {
-      if (!saved?.rows?.length) return;
-      setCheckData(saved);
-      setCheckFile({ name: saved.fileName });
-      setPlateColumn(saved.plateColumn);
-      setGpsColumn(saved.gpsColumn || "");
-      setIndex(indexCheckSheet(saved));
-      if (parsed?.headers?.length) {
-        setCheckSheet(parsed);
-      } else if (saved.headers?.length) {
-        setCheckSheet({ headers: saved.headers, rows: [] });
-      }
-    });
+    ])
+      .then(([saved, parsed]) => {
+        // نجاح مع فراغ = لا بيانات محفوظة (ليس فشل تحميل)
+        if (!saved?.rows?.length) return;
+        setCheckData(saved);
+        setCheckFile({ name: saved.fileName });
+        setPlateColumn(saved.plateColumn);
+        setGpsColumn(saved.gpsColumn || "");
+        setIndex(indexCheckSheet(saved));
+        if (parsed?.headers?.length) {
+          setCheckSheet(parsed);
+        } else if (saved.headers?.length) {
+          setCheckSheet({ headers: saved.headers, rows: [] });
+        }
+      })
+      .catch((err) => {
+        setFileError(idbUserMessage(err, "load"));
+      });
     return () => {
       speechRef.current?.stop();
       speechRef.current = null;
@@ -137,15 +142,25 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
       setPlateColumn(plateCol);
       setGpsColumn(gpsCol);
       const built = buildCheckSheet(parsed, file.name, plateCol, gpsCol);
+      // الذاكرة أولًا — التشيك يعمل حتى لو فشل الحفظ
       setCheckData(built);
       setIndex(indexCheckSheet(built));
-      await idbSet(CHECK_IDB_KEY, built);
-      await idbSet(CHECK_PARSED_IDB_KEY, parsed);
+      try {
+        await idbSet(CHECK_IDB_KEY, built);
+        await idbSet(CHECK_PARSED_IDB_KEY, parsed);
+      } catch (err) {
+        setFileError(idbUserMessage(err, "save"));
+      }
       backend.saveUpload(file.name, parsed.headers, parsed.rows).catch(() => {});
       setCheckProgress(100);
     } catch (err) {
-      setFileError(err instanceof Error ? err.message : "تعذّر قراءة ملف التشيك");
-      setCheckProgress(null);
+      if (isIdbError(err)) {
+        setFileError(idbUserMessage(err, "save"));
+        setCheckProgress(100);
+      } else {
+        setFileError(err instanceof Error ? err.message : "تعذّر قراءة ملف التشيك");
+        setCheckProgress(null);
+      }
     }
   }
 
@@ -154,7 +169,7 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
     const built = buildCheckSheet(checkSheet, checkFile.name, nextPlate, nextGps);
     setCheckData(built);
     setIndex(indexCheckSheet(built));
-    idbSet(CHECK_IDB_KEY, built).catch(() => {});
+    idbSet(CHECK_IDB_KEY, built).catch((err) => setFileError(idbUserMessage(err, "save")));
   }
 
   function clearCheckFile() {
@@ -168,8 +183,9 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
     setCheckProgress(null);
     setFound(null);
     setFileError(null);
-    idbRemove(CHECK_IDB_KEY).catch(() => {});
-    idbRemove(CHECK_PARSED_IDB_KEY).catch(() => {});
+    const notify = (err: unknown) => setFileError(idbUserMessage(err, "remove"));
+    idbRemove(CHECK_IDB_KEY).catch(notify);
+    idbRemove(CHECK_PARSED_IDB_KEY).catch(notify);
   }
 
   function tryLookup(raw: string, voice = false): "exact" | "similar" | false {

@@ -16,7 +16,7 @@ import { Capacitor } from "@capacitor/core";
 import { parseSpreadsheet, guessColumn, ParsedSheet } from "@/lib/xlsx-utils";
 import { runSortChunked, matchedPlateNorms, SortResult } from "@/lib/sort-logic";
 import { loadLocal, saveLocal } from "@/lib/storage";
-import { idbGet, idbRemove, idbSet } from "@/lib/idb";
+import { idbGet, idbRemove, idbSet, idbUserMessage, isIdbError } from "@/lib/idb";
 import { consumeSharedFile } from "@/lib/shared-file";
 import { listenForNativeSharedFile } from "@/lib/native-import";
 import { backend } from "@/lib/backend";
@@ -143,8 +143,8 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
 
 
   async function persistLibrary(next: SortLibraryFile[]) {
+    // حدّث الذاكرة أولًا حتى يستمر الفرز حتى لو فشل الحفظ
     setLibrary(next);
-    await saveSortLibrary(next);
     const merged = mergeEnabledSheets(next);
     if (merged) {
       setDataSheet(merged);
@@ -158,6 +158,11 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
     } else {
       setDataSheet(null);
       setDataFile(null);
+    }
+    try {
+      await saveSortLibrary(next);
+    } catch (err) {
+      flashNotice(idbUserMessage(err, "save"), 5000);
     }
   }
 
@@ -185,34 +190,46 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
       idbGet<ParsedSheet>(SORT_REFERRAL_IDB),
       idbGet<string[]>(SORT_BASELINE_IDB),
       loadSortLibrary(),
-    ]).then(([data, referral, baseline, lib]) => {
-      if (cancelled) return;
-      if (referral?.rows?.length) {
-        storedReferralRef.current = referral;
-        setReferralSheet(referral);
-      }
-      if (Array.isArray(baseline) && baseline.length) {
-        baselineRef.current = new Set(baseline.filter(Boolean));
-      }
-      if (lib.length > 0) {
-        setLibrary(lib);
-        const merged = mergeEnabledSheets(lib);
-        if (merged) {
-          storedDataRef.current = merged;
-          setDataSheet(merged);
-          setDataFile({ name: `${lib.filter((f) => f.enabled).length} ملف مفعّل` });
+    ])
+      .then(([data, referral, baseline, lib]) => {
+        if (cancelled) return;
+        if (referral?.rows?.length) {
+          storedReferralRef.current = referral;
+          setReferralSheet(referral);
         }
-      } else if (data?.rows?.length) {
-        const seeded = [createLibraryFile(initial.dataFileMeta?.name ?? "الداتا.xlsx", data, true)];
-        setLibrary(seeded);
-        saveSortLibrary(seeded).catch(() => {});
-        storedDataRef.current = data;
-        setDataSheet(data);
-      }
-    });
+        if (Array.isArray(baseline) && baseline.length) {
+          baselineRef.current = new Set(baseline.filter(Boolean));
+        }
+        if (lib.length > 0) {
+          setLibrary(lib);
+          const merged = mergeEnabledSheets(lib);
+          if (merged) {
+            storedDataRef.current = merged;
+            setDataSheet(merged);
+            setDataFile({ name: `${lib.filter((f) => f.enabled).length} ملف مفعّل` });
+          }
+        } else if (data?.rows?.length) {
+          const seeded = [createLibraryFile(initial.dataFileMeta?.name ?? "الداتا.xlsx", data, true)];
+          setLibrary(seeded);
+          saveSortLibrary(seeded).catch((err) => {
+            if (!cancelled) flashNotice(idbUserMessage(err, "save"), 5000);
+          });
+          storedDataRef.current = data;
+          setDataSheet(data);
+        }
+        // نجاح الاستعادة مع فراغ = لا بيانات محفوظة — لا رسالة مضلّلة
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        // لا تُظهر اسم ملف من metadata وكأن الورقة محمّلة
+        setDataFile(null);
+        setReferralFile(null);
+        flashNotice(idbUserMessage(err, "load"), 5000);
+      });
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // استقبال ملف شارَك المستخدم من تطبيق ثاني (مثل واتساب) عبر public/sw.js —
@@ -248,14 +265,24 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
   // أعدنا كتابة كل الصفوف من جديد
   React.useEffect(() => {
     if (dataSheet === storedDataRef.current) return;
-    if (dataSheet) idbSet(SORT_DATA_IDB, dataSheet).catch(() => {});
-    else idbRemove(SORT_DATA_IDB).catch(() => {});
+    if (dataSheet) {
+      idbSet(SORT_DATA_IDB, dataSheet).catch((err) => flashNotice(idbUserMessage(err, "save"), 5000));
+    } else {
+      idbRemove(SORT_DATA_IDB).catch((err) => flashNotice(idbUserMessage(err, "remove"), 4000));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataSheet]);
 
   React.useEffect(() => {
     if (referralSheet === storedReferralRef.current) return;
-    if (referralSheet) idbSet(SORT_REFERRAL_IDB, referralSheet).catch(() => {});
-    else idbRemove(SORT_REFERRAL_IDB).catch(() => {});
+    if (referralSheet) {
+      idbSet(SORT_REFERRAL_IDB, referralSheet).catch((err) =>
+        flashNotice(idbUserMessage(err, "save"), 5000)
+      );
+    } else {
+      idbRemove(SORT_REFERRAL_IDB).catch((err) => flashNotice(idbUserMessage(err, "remove"), 4000));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [referralSheet]);
 
   async function handleDataSelect(file: File) {
@@ -266,13 +293,24 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
       const parsed = await parseSpreadsheet(file);
       backend.saveUpload(file.name, parsed.headers, parsed.rows).catch(() => {});
       const entry = createLibraryFile(file.name, parsed, true);
-      const current = await loadSortLibrary();
+      let current: SortLibraryFile[] = library;
+      try {
+        current = await loadSortLibrary();
+      } catch (err) {
+        // استخدم مكتبة الجلسة الحالية إن فشل التحميل من التخزين
+        flashNotice(idbUserMessage(err, "load"), 5000);
+        current = library;
+      }
       await persistLibrary([entry, ...current].slice(0, 20));
     } catch (err) {
-      await backend.logError(
-        err instanceof Error ? err.message : "تعذّر قراءة ملف الداتا",
-        `أثناء رفع الملف: ${file.name}`
-      );
+      if (isIdbError(err)) {
+        flashNotice(idbUserMessage(err, "save"), 5000);
+      } else {
+        await backend.logError(
+          err instanceof Error ? err.message : "تعذّر قراءة ملف الداتا",
+          `أثناء رفع الملف: ${file.name}`
+        );
+      }
     } finally {
       clearInterval(timer);
       setDataProgress(100);
@@ -314,15 +352,20 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
     baselineRef.current = new Set();
     setLibrary([]);
     setPasteText("");
-    saveSortLibrary([]).catch(() => {});
-    idbRemove(SORT_DATA_IDB).catch(() => {});
-    idbRemove(SORT_REFERRAL_IDB).catch(() => {});
-    idbRemove(SORT_BASELINE_IDB).catch(() => {});
+    const notifyRemoveFail = (err: unknown) => flashNotice(idbUserMessage(err, "remove"), 4000);
+    saveSortLibrary([]).catch(notifyRemoveFail);
+    idbRemove(SORT_DATA_IDB).catch(notifyRemoveFail);
+    idbRemove(SORT_REFERRAL_IDB).catch(notifyRemoveFail);
+    idbRemove(SORT_BASELINE_IDB).catch(notifyRemoveFail);
   }
 
   async function persistBaseline(next: Set<string>) {
     baselineRef.current = next;
-    await idbSet(SORT_BASELINE_IDB, [...next]);
+    try {
+      await idbSet(SORT_BASELINE_IDB, [...next]);
+    } catch (err) {
+      flashNotice(idbUserMessage(err, "save"), 5000);
+    }
   }
 
 
@@ -444,10 +487,10 @@ export default function SortPage({ onNavigate }: SortPageProps = {}) {
     }).catch(() => {});
   }
 
-  function flashNotice(msg: string) {
+  function flashNotice(msg: string, ms = 2000) {
     if (noticeTimer.current) clearTimeout(noticeTimer.current);
     setActionNotice(msg);
-    noticeTimer.current = setTimeout(() => setActionNotice(null), 2000);
+    noticeTimer.current = setTimeout(() => setActionNotice(null), ms);
   }
 
   function buildResultsText() {
