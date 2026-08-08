@@ -54,11 +54,18 @@ export function isSamsungInternet(): boolean {
   return /SamsungBrowser/i.test(navigator.userAgent);
 }
 
-/** جهاز Huawei/Honor (حتى مع Chrome) */
+/**
+ * جهاز Huawei/Honor (حتى مع Chrome).
+ * مهم: Chrome على P30 Pro غالبًا يعرض رمز الجهاز فقط مثل VOG-L29 بدون كلمة Huawei.
+ */
 export function isHuaweiFamilyDevice(): boolean {
   if (typeof navigator === "undefined") return false;
   const ua = navigator.userAgent;
-  return /Huawei|HUAWEI|Honor|HONOR|HMSCore|Harmony/i.test(ua);
+  if (/Huawei|HUAWEI|Honor|HONOR|HMSCore|Harmony|HuaweiBrowser/i.test(ua)) return true;
+  // رموز طراز شائعة (P30/P40/Mate…) تظهر في UA بدل اسم الشركة
+  return /\b(VOG-|ELE-|ANA-|LIO-|LYA-|HMA-|TAS-|NOH-|ALN-|BRA-|JNY-|MAR-|ART-|CDY-|STK-|MED-|NTH-|ANY-|BON-|CTR-|MGA-|ALT-|GLA-|NAM-|RTE-|JAD-|DCO-|PAL-|BNE-)/i.test(
+    ua
+  );
 }
 
 /**
@@ -158,8 +165,8 @@ export function watchInstallAvailability(
     if (isSamsungInternet()) {
       return setState(deferred ? "ready" : "manual");
     }
-    // متصفحات أخرى ضعيفة فقط — اقتراح Chrome كخيار صريح (ليس تثبيتًا تلقائيًا)
-    if (isOtherAndroidBrowser() && !deferred) return setState("use-chrome");
+    // متصفحات أخرى ضعيفة: تعليمات يدوية فقط — لا redirect تلقائي إلى Chrome/APK
+    if (isOtherAndroidBrowser() && !deferred) return setState("manual");
     setState(deferred ? "ready" : "manual");
   };
 

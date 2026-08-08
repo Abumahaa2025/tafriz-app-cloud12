@@ -261,7 +261,8 @@ export function lookupPlateVoiceDetailed(
       return { status: "exact", row: exactDigitHits[0] };
     }
 
-    if (digitsOnly.length >= 4) {
+    // بحث تدريجي: رقم واحد فأكثر يحدّث النتائج فورًا (3 → 36 → 364 → 3640)
+    if (digitsOnly.length >= 1) {
       const containHits: CheckSheetRow[] = [];
       for (const [, row] of index) {
         const d = plateDigits(row.plate);
@@ -278,22 +279,21 @@ export function lookupPlateVoiceDetailed(
   }
 
   if (qLettersClean.length > 0 && digitsOnly.length === 0) {
-    // حرف واحد فقط ضعيف جدًا مع آلاف اللوحات — لا نتيجة بعد
-    if (qLettersClean.length < 2) {
-      return { status: "none", query: qLettersClean };
-    }
+    // بحث تدريجي بالحروف: م → مو → مون (لا ترفض الحرف المفرد)
     const exactLetterHits: CheckSheetRow[] = [];
     const containHits: CheckSheetRow[] = [];
+    const prefixHits: CheckSheetRow[] = [];
     for (const [, row] of index) {
       const letters = plateLettersOrdered(row.plate);
       if (!letters) continue;
       if (letters === qLettersClean) exactLetterHits.push(row);
+      else if (letters.startsWith(qLettersClean)) prefixHits.push(row);
       else if (letters.includes(qLettersClean) || qLettersClean.includes(letters)) {
         containHits.push(row);
       }
     }
-    // أظهر نتيجة مباشرة (أول مطابقة) — لا تُبقِ الميكروفون مفتوحًا بانتظار الرقم
     if (exactLetterHits.length >= 1) return { status: "exact", row: exactLetterHits[0] };
+    if (prefixHits.length >= 1) return { status: "exact", row: prefixHits[0] };
     if (containHits.length >= 1) return { status: "exact", row: containHits[0] };
     return { status: "none", query: qLettersClean };
   }

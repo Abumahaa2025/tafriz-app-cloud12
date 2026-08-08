@@ -336,12 +336,9 @@ function isVoiceCommitReady(token: string, loose = false): boolean {
   if (!token) return false;
   const digits = (token.match(/\d/g) || []).length;
   const letters = (token.match(/[\u0600-\u06FFa-zA-Z]/g) || []).length;
-  // رقم كافٍ وحده، أو حرفان فأكثر، أو حرف + رقم
-  if (digits >= 3) return true;
-  if (letters >= 2) return true;
-  if (digits >= 1 && letters >= 1) return true;
-  // عند نهاية الجلسة على Android: حرف/رقم مفرد ما زال يستحق محاولة بحث
-  if (loose && (digits >= 1 || letters >= 1)) return true;
+  // بحث تدريجي: حرف أو رقم واحد كافٍ للاعتماد/الجزئي
+  if (digits >= 1 || letters >= 1) return true;
+  if (loose) return token.length >= 1;
   return false;
 }
 
@@ -411,6 +408,8 @@ export function isSpeechRecognitionSupported(): boolean {
 export function startPlateSpeech(opts: {
   onFinal: (transcript: string, candidates: string[]) => void;
   onInterim?: (transcript: string) => void;
+  /** يُستدعى عند كل تحديث تدريجي (interim أو مقاطع) — للبحث الحي حرفًا/رقمًا */
+  onPartial?: (transcript: string, candidates: string[]) => void;
   onError?: (message: string) => void;
   onEnd?: () => void;
   /**
@@ -446,6 +445,33 @@ export function startPlateSpeech(opts: {
   /** آخر نص ظهر للمستخدم (interim أو final) — يُصفّى عند onend على Huawei/Android */
   let lastHeardRaw = "";
   let pendingInterim = "";
+
+  const emitPartial = (heard: string, candidates: string[]) => {
+    if (finished || stopped) return;
+    const unique = [...new Set(candidates.filter(Boolean))];
+    const list = unique.length ? unique : [speechToPlateToken(heard)].filter(Boolean);
+    pushVoiceDebug({
+      source: "plate-speech",
+      phase: "partial",
+      raw: heard,
+      displayed: heard,
+      finalSpeech: "",
+      normalized: list[0] || "",
+      intent: "plate_lookup_partial",
+      execution: list.length ? `candidates:${list.join("|")}` : "empty",
+      locale,
+      speechApi,
+      isFinal: false,
+    });
+    opts.onPartial?.(heard, list);
+  };
+
+  /** استعلام مكتمل بما يكفي لإنهاء جلسة الأمر (حروف+أرقام أو رقم طويل) */
+  const isCompleteQuery = (token: string) => {
+    const digits = (token.match(/\d/g) || []).length;
+    const letters = (token.match(/[\u0600-\u06FFa-zA-Z]/g) || []).length;
+    return digits >= 3 || (letters >= 1 && digits >= 2);
+  };
 
   const emitFinal = (heard: string, candidates: string[]) => {
     if (finished || committed) return;
@@ -528,15 +554,25 @@ export function startPlateSpeech(opts: {
         const ranked = plateBuf.ingest(transcripts);
         const display = plateBuf.value ? plateBuf.chunks.join(" ") : transcripts[0];
         if (display) opts.onInterim?.(display);
-        if (commitTimer) clearTimeout(commitTimer);
         const heard = transcripts[0];
-        const tokenNow = plateBuf.value;
+        const tokenNow = plateBuf.value || speechToPlateToken(heard);
+        const partialCandidates = tokenNow
+          ? [normalizePlate(tokenNow) || tokenNow, ...ranked]
+          : ranked;
+        // تحديث تدريجي فورًا — لا تنتظر isFinal كاملًا لدى الواجهة
+        emitPartial(display || heard, partialCandidates);
+        if (commitTimer) clearTimeout(commitTimer);
         if (!isVoiceCommitReady(tokenNow)) continue;
         commitTimer = setTimeout(() => {
           if (stopped || finished || committed) return;
           const finalCandidates = plateBuf.value
             ? [normalizePlate(plateBuf.value) || plateBuf.value, ...ranked]
             : ranked;
+          // أثناء التجميع القصير: حدّث فقط؛ أغلق الجلسة عند اكتمال معقول
+          if (commandMode && !isCompleteQuery(plateBuf.value || tokenNow)) {
+            emitPartial(heard, finalCandidates);
+            return;
+          }
           emitFinal(heard, finalCandidates);
           if (commandMode) finishSession();
         }, commitDelayForToken(tokenNow));
@@ -547,17 +583,28 @@ export function startPlateSpeech(opts: {
     if (interim) {
       pendingInterim = interim.trim();
       lastHeardRaw = pendingInterim || lastHeardRaw;
+      // لا تُلحق interim المتنامي في plateBuf (يتكرر) — استخرج الاستعلام من النص الحالي
+      const fromInterim = speechToPlateToken(pendingInterim);
+      const candidates = speechToPlateCandidates(pendingInterim);
+      const tokenNow =
+        fromInterim ||
+        candidates[0] ||
+        pendingInterim.replace(/\s+/g, "");
       pushVoiceDebug({
         source: "plate-speech",
         phase: "interim",
         raw: pendingInterim,
         displayed: pendingInterim,
         finalSpeech: "",
+        normalized: tokenNow,
         locale,
         speechApi,
         isFinal: false,
       });
-      opts.onInterim?.(interim);
+      opts.onInterim?.(pendingInterim);
+      if (tokenNow) {
+        emitPartial(pendingInterim, [tokenNow, ...candidates.filter((c) => c !== tokenNow)]);
+      }
     }
   };
 
