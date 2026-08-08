@@ -99,6 +99,8 @@ export default function PendingApprovalPage() {
 
   async function sendToAdmin(text: string) {
     if (!user || !text.trim()) return;
+    // مسار إيماءة المستخدم لطلب إذن الإشعارات (عبر الدالة المركزية فقط)
+    void requestNotificationPermission();
     setSendBusy(true);
     setSendNotice(null);
     try {
@@ -222,15 +224,7 @@ export default function PendingApprovalPage() {
           variant={showInApp ? "default" : "outline"}
           size="lg"
           className="w-full"
-          onClick={() => {
-            setShowInApp((v) => {
-              if (!v) {
-                // مسار إيماءة المستخدم لطلب إذن الإشعارات (عبر الدالة المركزية فقط)
-                void requestNotificationPermission();
-              }
-              return !v;
-            });
-          }}
+          onClick={() => setShowInApp((v) => !v)}
         >
           <AppWindow className="h-5 w-5" />
           التواصل مع الإدارة عبر التطبيق
