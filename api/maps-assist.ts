@@ -16,6 +16,7 @@ import {
   type MapsAssistAction,
   type MapsLatLng,
 } from "../lib/api/gemini-maps.js";
+import { enforceRateLimit } from "../lib/api/rate-limit.js";
 
 const MAX_QUERY_CHARS = 500;
 const MAX_TRACK_POINTS = 40;
@@ -64,6 +65,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return fail(res, 403, "not_approved", "حسابك غير مفعّل بعد. راجع الإدارة.");
     }
     return fail(res, 401, "unauthorized", "الجلسة منتهية. سجّل الدخول من جديد.");
+  }
+
+  if (!enforceRateLimit(res, `maps-assist:user:${auth.user.userId}`, 60, 60 * 1000)) {
+    return;
   }
 
   const apiKey = readGeminiKey();

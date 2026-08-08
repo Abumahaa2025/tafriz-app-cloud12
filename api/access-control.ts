@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { fail, failInternal, failWithCause } from "../lib/api/errors.js";
 import { isMissingConfig, readAnonKey, readOwnerIdentifier, readSupabaseSecrets } from "../lib/api/env.js";
 import { personalCodeMatches, serverPersonalCode } from "../lib/api/personal-code.js";
+import { clientIp, enforceRateLimit } from "../lib/api/rate-limit.js";
 
 /**
  * رسالة موحّدة لأي فشل مصدره قاعدة البيانات. نص Postgres الأصلي يروح للسجل
@@ -74,6 +75,19 @@ function makeCode() {
   return `TFZ-${n}`;
 }
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MAX_PACKAGE_NAME = 80;
+const MAX_FEEDBACK_REPLY = 2000;
+const MAX_APPROVE_DAYS = 366;
+const MIN_APPROVE_DAYS = 1;
+
+function readUserId(raw: unknown): string | null {
+  const id = String(raw || "").trim();
+  if (!id || !UUID_RE.test(id)) return null;
+  return id;
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
     return fail(res, 405, "method_not_allowed", "الطريقة غير مسموحة.");
@@ -100,17 +114,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
   const { user, profile, admin } = requester;
 
+  // حد عام لكل مستخدم + حد أضيق لمحاولات التفعيل بالرمز
+  if (!enforceRateLimit(res, `access-control:user:${user.id}`, 60, 60 * 1000)) {
+    return;
+  }
+  if (action === "redeemCode") {
+    if (
+      !enforceRateLimit(res, `access-control:redeem:${user.id}:${clientIp(req)}`, 20, 15 * 60 * 1000)
+    ) {
+      return;
+    }
+  }
+
   try {
     if (action === "approve" || action === "revoke") {
       if (!profile?.is_owner) {
         return fail(res, 403, "owner_only", "هذه العملية متاحة للإدارة فقط.");
       }
-      const userId = String(req.body?.userId || "");
+      const userId = readUserId(req.body?.userId);
       if (!userId) return fail(res, 400, "missing_userId", "لم يُحدَّد الحساب المطلوب.");
 
       if (action === "approve") {
-        const days = Number(req.body?.days || 30);
-        const packageName = String(req.body?.packageName || "الباقة الشهرية");
+        const daysRaw = Number(req.body?.days || 30);
+        const days = Number.isFinite(daysRaw)
+          ? Math.min(MAX_APPROVE_DAYS, Math.max(MIN_APPROVE_DAYS, Math.floor(daysRaw)))
+          : 30;
+        const packageName = String(req.body?.packageName || "الباقة الشهرية")
+          .trim()
+          .slice(0, MAX_PACKAGE_NAME) || "الباقة الشهرية";
         const expires = new Date();
         expires.setDate(expires.getDate() + days);
         const { data, error } = await admin
@@ -374,7 +405,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return fail(res, 403, "owner_only", "هذه العملية متاحة للإدارة فقط.");
       }
       const ids = Array.isArray(req.body?.userIds)
-        ? (req.body.userIds as unknown[]).map((x) => String(x)).filter(Boolean).slice(0, 500)
+        ? (req.body.userIds as unknown[])
+            .map((x) => readUserId(x))
+            .filter((x): x is string => Boolean(x))
+            .slice(0, 200)
         : [];
       if (ids.length === 0) {
         return fail(res, 400, "missing_userIds", "لم تُحدَّد الحسابات المطلوبة.");
@@ -391,8 +425,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!profile?.is_owner) {
         return fail(res, 403, "owner_only", "هذه العملية متاحة للإدارة فقط.");
       }
-      const threadId = String(req.body?.threadId || "").trim();
-      const message = String(req.body?.message || "").trim();
+      const threadId = String(req.body?.threadId || "").trim().slice(0, 80);
+      const message = String(req.body?.message || "").trim().slice(0, MAX_FEEDBACK_REPLY);
       if (!threadId || !message) {
         return fail(res, 400, "missing_thread_or_message", "اكتب نص الرد أولًا.");
       }

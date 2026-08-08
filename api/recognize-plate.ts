@@ -7,6 +7,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { fail, failInternal, failUpstream } from "../lib/api/errors.js";
 import { readAnthropicKey } from "../lib/api/env.js";
 import { resolveApprovedUser } from "../lib/api/auth.js";
+import { enforceRateLimit } from "../lib/api/rate-limit.js";
 
 export const config = {
   api: { bodyParser: false },
@@ -79,6 +80,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return fail(res, 403, "not_approved", "حسابك غير مفعّل بعد. راجع الإدارة.");
     }
     return fail(res, 401, "unauthorized", "الجلسة منتهية. سجّل الدخول من جديد.");
+  }
+
+  // OCR مدفوع — حدّ صارم لكل مستخدم موافق عليه
+  if (!enforceRateLimit(res, `recognize-plate:user:${auth.user.userId}`, 20, 60 * 60 * 1000)) {
+    return;
   }
 
   const apiKey = readAnthropicKey();
