@@ -19,9 +19,12 @@ export function normalizeSearchText(raw: string): string {
 export function extractPlateLetters(plateNorm: string): string[] {
   const out = new Set<string>();
 
-  // "5227 د ر" أو "د ر 5227"
+  // "5227 د ر" أو "د ر 5227" أو كتلة «مون» مفصولة عن الرقم بمسافة
   for (const t of plateNorm.split(" ").map((x) => x.trim())) {
     if (/^[\u0600-\u06FF]$/.test(t)) out.add(t);
+    else if (/^[\u0600-\u06FF]{2,3}$/.test(t)) {
+      for (const ch of t) out.add(ch);
+    }
   }
 
   // "5227ابج" / "ابج5227" — كتلة حروف اللوحة الملتصقة بالرقم فقط
