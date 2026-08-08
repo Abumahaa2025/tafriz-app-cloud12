@@ -7,17 +7,23 @@ import { loadLocal, saveLocal } from "./storage";
 import { pushInstallDebugEvent, setInstallDebugPatch } from "./install-debug";
 
 const DISMISSED_KEY = "install_prompt_dismissed_at";
-/** يحتفظ بحالة «تم التثبيت / بانتظار» داخل الجلسة حتى لا يختفي شريط التنزيل أو «فتح التطبيق». */
+/** يحتفظ فقط بحالة «تم التثبيت» لإظهار «فتح التطبيق» — لا نُعيد «waiting» بعد إعادة التحميل. */
 const FLOW_KEY = "install_flow_phase";
 /** إخفاء التذكير أسبوعًا بعد رفضه — تنبيه لا يُلاحق المستخدم. */
 const DISMISS_DAYS = 7;
+/** بعد قبول موجّه النظام نُكمل الواجهة إلى «فتح التطبيق» حتى لو تأخّر حدث appinstalled. */
+const ACCEPT_COMPLETE_MS = 2800;
+/** مهلة أمان إن علّق موجّه التثبيت دون رد. */
+const PROMPT_TIMEOUT_MS = 45000;
 
-type PersistedFlow = "waiting" | "installed";
+type PersistedFlow = "installed";
 
 function readPersistedFlow(): PersistedFlow | null {
   try {
     const v = sessionStorage.getItem(FLOW_KEY);
-    if (v === "waiting" || v === "installed") return v;
+    if (v === "installed") return v;
+    // تنظيف بقايا waiting القديمة التي كانت تُعلّق الواجهة على «جاري التثبيت»
+    if (v === "waiting") sessionStorage.removeItem(FLOW_KEY);
   } catch {
     // ignore
   }
@@ -30,6 +36,18 @@ function writePersistedFlow(phase: PersistedFlow | null) {
     else sessionStorage.setItem(FLOW_KEY, phase);
   } catch {
     // ignore
+  }
+}
+
+async function ensureServiceWorkerReady(): Promise<void> {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+  try {
+    await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise<void>((resolve) => window.setTimeout(resolve, 2500)),
+    ]);
+  } catch {
+    // ignore — نتابع التثبيت حتى إن تأخر الـ SW
   }
 }
 
@@ -185,7 +203,7 @@ function publishDebug(state: InstallState, extra?: Record<string, unknown>) {
 
 /**
  * مراقب تثبيت واحد مشترك (singleton) حتى لا يتنازع أكثر من مكوّن على beforeinstallprompt.
- * لا يُعلَن التثبيت ناجحًا إلا بعد appinstalled أو standalone حقيقي.
+ * بعد قبول موجّه النظام تُكمل الواجهة إلى «فتح التطبيق» (appinstalled أو مهلة قصيرة).
  */
 type InstallListener = (state: InstallState) => void;
 
@@ -199,7 +217,7 @@ const sharedListeners = new Set<InstallListener>();
 
 function emitShared(next: InstallState) {
   sharedCurrent = next;
-  if (next === "waiting" || next === "installed") writePersistedFlow(next);
+  if (next === "installed") writePersistedFlow("installed");
   else if (next === "unavailable" || next === "manual" || next === "use-chrome") writePersistedFlow(null);
   publishDebug(next, { beforeinstallprompt: !!sharedDeferred });
   for (const listener of sharedListeners) listener(next);
@@ -212,15 +230,19 @@ function stopSharedPoll() {
   }
 }
 
-function confirmSharedInstalled() {
+function clearWaitingTimer() {
   if (sharedWaitingTimer) {
     clearTimeout(sharedWaitingTimer);
     sharedWaitingTimer = null;
   }
+}
+
+function confirmSharedInstalled(source: string = "confirmed") {
+  clearWaitingTimer();
   stopSharedPoll();
   sharedDeferred = null;
   writePersistedFlow("installed");
-  pushInstallDebugEvent("appinstalled_or_standalone_confirmed");
+  pushInstallDebugEvent("install_complete", source);
   publishDebug("installed", { appinstalled: true, beforeinstallprompt: false });
   emitShared("installed");
 }
@@ -230,9 +252,24 @@ function startSharedStandalonePoll() {
   sharedPollTimer = setInterval(() => {
     if (isRunningStandalone()) {
       stopSharedPoll();
-      confirmSharedInstalled();
+      confirmSharedInstalled("standalone_poll");
     }
-  }, 700);
+  }, 500);
+}
+
+/** بعد قبول موجّه النظام: أكمل إلى «فتح التطبيق» حتى لو تأخّر appinstalled. */
+function scheduleAcceptedCompletion() {
+  clearWaitingTimer();
+  startSharedStandalonePoll();
+  sharedWaitingTimer = setTimeout(() => {
+    if (sharedCurrent !== "waiting") return;
+    if (isRunningStandalone()) {
+      confirmSharedInstalled("standalone_after_accept");
+      return;
+    }
+    pushInstallDebugEvent("accepted_complete_to_open", "ui_complete");
+    confirmSharedInstalled("accepted_timeout");
+  }, ACCEPT_COMPLETE_MS);
 }
 
 function computeShared() {
@@ -243,14 +280,12 @@ function computeShared() {
   if (!shouldOfferInstallUi()) {
     if (!sharedDeferred) return emitShared("unavailable");
   }
-  if (sharedCurrent === "waiting" || sharedCurrent === "installed") return;
-  const persisted = readPersistedFlow();
-  if (persisted === "installed") return emitShared("installed");
-  if (persisted === "waiting") {
-    emitShared("waiting");
-    startSharedStandalonePoll();
-    return;
+  if (sharedCurrent === "waiting") return;
+  if (sharedCurrent === "installed" || readPersistedFlow() === "installed") {
+    return emitShared("installed");
   }
+  // لا نستعد waiting من الجلسة — كان يعلّق الزر بدون تثبيت حقيقي
+  readPersistedFlow();
   if (isIOSDevice()) return emitShared("manual");
   if (isHuaweiFamilyDevice() || (typeof navigator !== "undefined" && /HuaweiBrowser/i.test(navigator.userAgent))) {
     return emitShared(sharedDeferred ? "ready" : "manual");
@@ -273,7 +308,14 @@ function onSharedBeforeInstall(event: Event) {
 function onSharedInstalled() {
   pushInstallDebugEvent("appinstalled", "browser_event");
   publishDebug(sharedCurrent, { appinstalled: true });
-  confirmSharedInstalled();
+  confirmSharedInstalled("appinstalled");
+}
+
+function onSharedVisibility() {
+  if (document.visibilityState !== "visible") return;
+  if (sharedCurrent === "waiting" && isRunningStandalone()) {
+    confirmSharedInstalled("visible_standalone");
+  }
 }
 
 async function sharedInstall(): Promise<"prompted" | "accepted" | "dismissed" | "unavailable"> {
@@ -290,32 +332,37 @@ async function sharedInstall(): Promise<"prompted" | "accepted" | "dismissed" | 
   }
   const event = sharedDeferred;
   sharedDeferred = null;
-  writePersistedFlow("waiting");
+
+  // مهم: نستدعي prompt() مباشرة من إيماءة المستخدم — بدون await قبله
   emitShared("waiting");
   publishDebug("waiting", { promptCalled: true, beforeinstallprompt: false });
   pushInstallDebugEvent("prompt_called");
   startSharedStandalonePoll();
+
   try {
-    await event.prompt();
-    const { outcome } = await event.userChoice;
+    const promptPromise = event.prompt().then(() => event.userChoice);
+    const choice = await Promise.race([
+      promptPromise,
+      new Promise<{ outcome: "accepted" | "dismissed" }>((resolve) => {
+        window.setTimeout(() => resolve({ outcome: "dismissed" }), PROMPT_TIMEOUT_MS);
+      }),
+    ]);
+    const outcome = choice.outcome;
     publishDebug("waiting", { userChoice: outcome, promptCalled: true });
     pushInstallDebugEvent("userChoice", outcome);
+
     if (outcome === "accepted") {
-      if (sharedWaitingTimer) clearTimeout(sharedWaitingTimer);
-      sharedWaitingTimer = setTimeout(() => {
-        if (isRunningStandalone()) {
-          confirmSharedInstalled();
-          return;
-        }
-        pushInstallDebugEvent("accepted_still_waiting", "keep_progress_ui");
-      }, 12000);
+      scheduleAcceptedCompletion();
       return "accepted";
     }
+
+    clearWaitingTimer();
     stopSharedPoll();
     writePersistedFlow(null);
     emitShared("manual");
     return "dismissed";
   } catch (err) {
+    clearWaitingTimer();
     stopSharedPoll();
     writePersistedFlow(null);
     pushInstallDebugEvent("prompt_error", err instanceof Error ? err.message : "unknown");
@@ -329,7 +376,9 @@ function ensureSharedWatch() {
   sharedWatching = true;
   window.addEventListener("beforeinstallprompt", onSharedBeforeInstall);
   window.addEventListener("appinstalled", onSharedInstalled);
+  document.addEventListener("visibilitychange", onSharedVisibility);
   pushInstallDebugEvent("watch_start");
+  void ensureServiceWorkerReady();
   computeShared();
 }
 
