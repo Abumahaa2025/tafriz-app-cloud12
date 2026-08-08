@@ -107,21 +107,18 @@ export function InstallAppBanner() {
   }
 
   async function onInstallClick() {
-    if (state === "ready") {
-      const result = await installRef.current?.();
-      if (result === "unavailable" || result === "dismissed") setShowSteps(true);
-      return;
-    }
-    setShowSteps(true);
+    if (state === "waiting" || state === "installed") return;
+    const result = await installRef.current?.();
+    if (result === "unavailable" || result === "dismissed") setShowSteps(true);
   }
 
   const subtitle =
     state === "ready"
       ? "ثبّت «الفرز» على الجوال لفتحه كتطبيق من الشاشة الرئيسية (PWA — بدون APK)."
       : state === "waiting"
-        ? "جاري تنزيل/تثبيت التطبيق… لا تغلق هذه الشاشة حتى يظهر زر الفتح."
+        ? "أكّد موجّه النظام إن ظهر — بعدها سيكتمل التثبيت ويظهر زر الفتح."
         : state === "installed"
-          ? "اكتمل التثبيت. اضغط «فتح التطبيق» أو افتح أيقونة «الفرز» من الشاشة الرئيسية."
+          ? "اكتمل التثبيت. اضغط «فتح التطبيق» الآن أو افتح أيقونة «الفرز» من الشاشة الرئيسية."
           : manualKind === "huawei"
             ? "اضغط «تثبيت التطبيق» واتبع خطوات Chrome بالأسفل (PWA فقط — ليس APK)."
             : "اضغط «تثبيت التطبيق» واتبع الخطوات إن لم يظهر موجّه النظام مباشرة.";
@@ -142,7 +139,7 @@ export function InstallAppBanner() {
           <div className="flex flex-1 flex-col gap-0.5 text-right">
             <p className="text-sm font-black text-foreground">
               {state === "installed"
-                ? "تم تثبيت «الفرز»"
+                ? "اكتمل التثبيت — افتح التطبيق"
                 : state === "waiting"
                   ? "جاري التثبيت…"
                   : "تثبيت التطبيق على الجوال"}

@@ -35,28 +35,28 @@ export function LoginInstallCard() {
 
   async function onInstall() {
     window.dispatchEvent(new CustomEvent("tafriz:show-install"));
-    if (state === "ready") {
-      await installRef.current?.();
-      return;
-    }
     if (state === "installed") {
       rememberInstallOpened();
       window.location.assign("/?source=pwa");
+      return;
     }
+    if (state === "waiting") return;
+    // يفتح موجّه النظام إن توفر؛ وإلا تظهر خطوات التثبيت اليدوي في البانر
+    await installRef.current?.();
   }
 
   const title =
     state === "installed"
-      ? "تم تثبيت «الفرز»"
+      ? "اكتمل التثبيت — افتح التطبيق"
       : state === "waiting"
         ? "جاري تثبيت التطبيق…"
         : "ثبّت التطبيق على جوالك";
 
   const subtitle =
     state === "installed"
-      ? "اضغط فتح التطبيق أو افتح الأيقونة من الشاشة الرئيسية."
+      ? "اضغط «فتح التطبيق» الآن، أو افتح أيقونة «الفرز» من الشاشة الرئيسية."
       : state === "waiting"
-        ? "انتظر حتى يكتمل التنزيل — لا تغلق الصفحة."
+        ? "أكّد موجّه النظام إن ظهر — بعدها سيظهر زر الفتح مباشرة."
         : "للتثبيت السريع على الشاشة الرئيسية قبل تسجيل الدخول.";
 
   return (
@@ -77,6 +77,15 @@ export function LoginInstallCard() {
             <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">{subtitle}</p>
           </div>
         </div>
+        {state === "waiting" && (
+          <div
+            className="h-2 w-full overflow-hidden rounded-full bg-primary/15"
+            role="progressbar"
+            aria-label="تقدم التثبيت"
+          >
+            <div className="login-install-progress h-full w-1/3 rounded-full bg-primary" />
+          </div>
+        )}
         {state === "waiting" ? (
           <Button className="w-full" disabled>
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -97,6 +106,15 @@ export function LoginInstallCard() {
             )}
           </Button>
         )}
+        <style>{`
+          @keyframes login-install-progress-slide {
+            0% { transform: translateX(-120%); }
+            100% { transform: translateX(320%); }
+          }
+          .login-install-progress {
+            animation: login-install-progress-slide 1.35s ease-in-out infinite;
+          }
+        `}</style>
       </CardContent>
     </Card>
   );
