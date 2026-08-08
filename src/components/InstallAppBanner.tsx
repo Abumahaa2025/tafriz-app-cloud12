@@ -6,7 +6,7 @@ import {
   detectInstallManualKind,
   InstallState,
   isRunningStandalone,
-  rememberInstallOpened,
+  openInstalledAppNavigation,
   rememberPromptDismissed,
   shouldOfferInstallUi,
   watchInstallAvailability,
@@ -106,8 +106,7 @@ export function InstallAppBanner() {
   }
 
   function openInstalledApp() {
-    rememberInstallOpened();
-    window.location.assign("/?source=pwa");
+    openInstalledAppNavigation();
   }
 
   async function onInstallClick() {

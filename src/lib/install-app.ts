@@ -7,6 +7,8 @@ import { loadLocal, saveLocal } from "./storage";
 import { pushInstallDebugEvent, setInstallDebugPatch } from "./install-debug";
 
 const DISMISSED_KEY = "install_prompt_dismissed_at";
+/** بعد إكمال التثبيت/فتح التطبيق — لا نُعيد بطاقة التثبيت في نفس المتصفح. */
+const INSTALL_DONE_KEY = "install_flow_completed_at";
 /** يحتفظ فقط بحالة «تم التثبيت» لإظهار «فتح التطبيق» — لا نُعيد «waiting» بعد إعادة التحميل. */
 const FLOW_KEY = "install_flow_phase";
 /** إخفاء التذكير أسبوعًا بعد رفضه — تنبيه لا يُلاحق المستخدم. */
@@ -84,10 +86,39 @@ export function isRunningStandalone(): boolean {
   );
 }
 
+function forceInstallHelpRequested(): boolean {
+  try {
+    return new URLSearchParams(window.location.search).get("installHelp") === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** هل أتمّ المستخدم مسار التثبيت/الفتح على هذا المتصفح؟ */
+export function wasInstallFlowCompleted(): boolean {
+  return !!loadLocal<number | null>(INSTALL_DONE_KEY, null);
+}
+
+function markInstallFlowCompleted(): void {
+  saveLocal(INSTALL_DONE_KEY, Date.now());
+}
+
+function clearInstallFlowCompleted(): void {
+  saveLocal(INSTALL_DONE_KEY, null);
+}
+
 /** هل نعرض مسار التثبيت على هذا الجهاز (جوال في المتصفح)؟ */
 export function shouldOfferInstallUi(): boolean {
   if (typeof window === "undefined") return false;
   if (isRunningStandalone()) return false;
+  // بعد «فتح التطبيق» لا نُرجع المستخدم لبطاقة التثبيت مرة أخرى
+  if (wasInstallFlowCompleted() && !forceInstallHelpRequested()) return false;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("installed") === "1" && !forceInstallHelpRequested()) return false;
+  } catch {
+    // ignore
+  }
   if (isIOSDevice()) return true;
   if (typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent)) return true;
   // شاشات لمس واسعة قد تكون جوالًا بدون Android في الـ UA
@@ -156,9 +187,27 @@ export function rememberPromptDismissed(): void {
   writePersistedFlow(null);
 }
 
-/** بعد فتح التطبيق من الزر — أخفِ شريط «فتح التطبيق» لهذه الجلسة إن بقي في المتصفح. */
+/**
+ * بعد ضغط «فتح التطبيق»: أخفِ مسار التثبيت نهائيًا في هذا المتصفح
+ * حتى لا يعود لـ «تثبيت الآن» بعد إعادة التحميل داخل التبويب.
+ */
 export function rememberInstallOpened(): void {
+  markInstallFlowCompleted();
   writePersistedFlow(null);
+  pushInstallDebugEvent("install_opened", "hide_install_ui");
+}
+
+/** الانتقال بعد التثبيت — بدون إعادة إظهار بطاقة التثبيت. */
+export function openInstalledAppNavigation(): void {
+  rememberInstallOpened();
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set("source", "pwa");
+    url.searchParams.set("installed", "1");
+    window.location.replace(`${url.pathname}?${url.searchParams.toString()}${url.hash}`);
+  } catch {
+    window.location.replace("/?source=pwa&installed=1");
+  }
 }
 
 export type InstallState =
@@ -242,6 +291,7 @@ function confirmSharedInstalled(source: string = "confirmed") {
   stopSharedPoll();
   sharedDeferred = null;
   writePersistedFlow("installed");
+  // لا نُخفي زر «فتح التطبيق» هنا — الإخفاء يتم عند الضغط على الفتح
   pushInstallDebugEvent("install_complete", source);
   publishDebug("installed", { appinstalled: true, beforeinstallprompt: false });
   emitShared("installed");
@@ -275,10 +325,11 @@ function scheduleAcceptedCompletion() {
 function computeShared() {
   if (isRunningStandalone()) {
     writePersistedFlow(null);
+    markInstallFlowCompleted();
     return emitShared("unavailable");
   }
   if (!shouldOfferInstallUi()) {
-    if (!sharedDeferred) return emitShared("unavailable");
+    return emitShared("unavailable");
   }
   if (sharedCurrent === "waiting") return;
   if (sharedCurrent === "installed" || readPersistedFlow() === "installed") {
@@ -300,6 +351,8 @@ function computeShared() {
 function onSharedBeforeInstall(event: Event) {
   event.preventDefault();
   sharedDeferred = event as BeforeInstallPromptEvent;
+  // إن عاد موجّه التثبيت فالتطبيق قابل للتثبيت مجددًا — أظهر المسار
+  clearInstallFlowCompleted();
   pushInstallDebugEvent("beforeinstallprompt", "captured");
   publishDebug(sharedCurrent, { beforeinstallprompt: true });
   if (sharedCurrent !== "waiting" && sharedCurrent !== "installed") computeShared();

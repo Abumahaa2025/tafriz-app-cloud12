@@ -5,7 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import {
   InstallState,
   isRunningStandalone,
-  rememberInstallOpened,
+  openInstalledAppNavigation,
   shouldOfferInstallUi,
   watchInstallAvailability,
 } from "@/lib/install-app";
@@ -37,8 +37,7 @@ export function LoginInstallCard() {
 
   async function onInstall() {
     if (state === "installed") {
-      rememberInstallOpened();
-      window.location.assign("/?source=pwa");
+      openInstalledAppNavigation();
       return;
     }
     if (state === "waiting") return;
