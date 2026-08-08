@@ -122,6 +122,24 @@ npm run verify:db -- <url> <anon-key>
 
 - `api/recognize-plate` يرفض أي ملف أكبر من 8 ميجابايت وأي نوع غير صورة، حتى لا
   يستنزف أحد ذاكرة الدالة بطلب ضخم.
+- **حد طلبات (rate limit)** في ذاكرة الدالة عبر `lib/api/rate-limit.ts`
+  (أفضل جهد لكل instance على Vercel، وليس موزّعًا عالميًا):
+
+  | المسار | الحد التقريبي |
+  | --- | --- |
+  | `/api/auth-register` | 10 / 15 دقيقة لكل IP |
+  | `/api/access-control` | 60 / دقيقة لكل مستخدم؛ تفعيل الرمز 20 / 15 دقيقة |
+  | `/api/recognize-plate` | 20 / ساعة لكل مستخدم موافق |
+  | `/api/maps-assist` | 60 / دقيقة لكل مستخدم موافق |
+
+  عند التجاوز: `429` + `Retry-After`. للحد العالمي استخدم WAF على النطاق.
+- تحقّق مدخلات أضيق: طول المعرّف/كلمة المرور في التسجيل، أيام الباقة، أسماء
+  الباقات، معرّفات UUID، وطول ردود الملاحظات.
+- **ترويسات أمنية آمنة للخرائط** في `vercel.json` (بدون CSP مُلزم):
+  `X-Content-Type-Options`, `Referrer-Policy`, `X-Frame-Options`,
+  `Permissions-Policy` (geolocation/microphone/camera للذات فقط).
+  لا نضع Content-Security-Policy إلزامية حتى لا تُكسر بلاطات/سكربتات الخرائط.
+- للتحقق من RLS على مشروع الإنتاج شغّل `supabase/verify-rls.sql` من SQL Editor.
 - الدوال الخادمية تُفحص بـ `npm run typecheck:api`. قبل ذلك كان `tsconfig.json`
   يغطّي `src/` فقط، فكان مجلد `api/` — وفيه المفتاح السري — بلا أي فحص أنواع.
 

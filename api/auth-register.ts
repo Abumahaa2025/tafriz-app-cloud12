@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 import { fail, failWithCause } from "../lib/api/errors.js";
 import { isMissingConfig, readOwnerIdentifier, readSupabaseSecrets } from "../lib/api/env.js";
+import { clientIp, enforceRateLimit } from "../lib/api/rate-limit.js";
 
 /**
  * إنشاء حساب مؤكَّد مباشرة عبر service role حتى لا يعتمد التسجيل
@@ -61,9 +62,50 @@ async function findUserIdByEmail(
   return hit?.id ?? null;
 }
 
+const MAX_PASSWORD_CHARS = 128;
+const MAX_IDENTIFIER_CHARS = 254;
+const MAX_NAME_CHARS = 80;
+const MAX_CITY_CHARS = 60;
+
+function normalizeIdentifier(
+  type: IdentifierType,
+  raw: unknown
+): { ok: true; value: string } | { ok: false; message: string } {
+  if (typeof raw !== "string") {
+    return { ok: false, message: "بيانات الطلب غير مكتملة أو غير صحيحة." };
+  }
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > MAX_IDENTIFIER_CHARS) {
+    return { ok: false, message: "البريد أو رقم الجوال غير صالح. تأكد من كتابته بشكل صحيح." };
+  }
+  if (type === "email") {
+    const email = trimmed.toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return { ok: false, message: "البريد أو رقم الجوال غير صالح. تأكد من كتابته بشكل صحيح." };
+    }
+    return { ok: true, value: email };
+  }
+  const digits = trimmed.replace(/\D/g, "");
+  if (digits.length < 8 || digits.length > 15) {
+    return { ok: false, message: "البريد أو رقم الجوال غير صالح. تأكد من كتابته بشكل صحيح." };
+  }
+  return { ok: true, value: digits };
+}
+
+function sanitizeProfileField(value: unknown, max: number): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().slice(0, max);
+  return trimmed || null;
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
     return fail(res, 405, "method_not_allowed", "الطريقة غير مسموحة.");
+  }
+
+  // نقطة مفتوحة بلا جلسة — الحدّ الأول ضد التسجيل الجماعي واستنزاف service role
+  if (!enforceRateLimit(res, `auth-register:ip:${clientIp(req)}`, 10, 15 * 60 * 1000)) {
+    return;
   }
 
   // 503 مقصود: العميل يفهمه كإشارة ليكمل بالمسار الاحتياطي في backend-supabase.ts
@@ -81,14 +123,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const { identifierType, identifier, password, profile } = req.body ?? {};
   if (
     (identifierType !== "email" && identifierType !== "phone") ||
-    !identifier ||
     typeof password !== "string"
   ) {
     return fail(res, 400, "invalid_payload", "بيانات الطلب غير مكتملة أو غير صحيحة.");
   }
-  // متوسط فأعلى: 8+ وتشمل حرفًا ورقمًا على الأقل
+
+  const normalized = normalizeIdentifier(identifierType, identifier);
+  if (!normalized.ok) {
+    return fail(res, 400, "invalid_identifier", normalized.message);
+  }
+
+  // متوسط فأعلى: 8+ وتشمل حرفًا ورقمًا على الأقل — مع سقف طول ضد حمولات ضخمة
   {
     const p = password;
+    if (p.length > MAX_PASSWORD_CHARS) {
+      return fail(res, 400, "password_too_long", "كلمة المرور طويلة جدًا.");
+    }
     const hasLetter = /[A-Za-z\u0600-\u06FF]/.test(p);
     const hasDigit = /\d/.test(p);
     const hasSpecial = /[^A-Za-z0-9\u0600-\u06FF]/.test(p);
@@ -108,18 +158,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  const authEmail = toAuthEmail(identifierType, identifier);
+  const authEmail = toAuthEmail(identifierType, normalized.value);
+  // للجوال نبقي صيغة العرض كما أدخلها المستخدم (بعد القصّ)، والمعرّف الرقمي للبريد الداخلي فقط
+  const storedIdentifier =
+    identifierType === "email"
+      ? normalized.value
+      : String(identifier).trim().slice(0, MAX_IDENTIFIER_CHARS);
   const ownerId = readOwnerIdentifier();
-  const isOwner = String(identifier) === ownerId;
+  const ownerDigits = ownerId.replace(/\D/g, "");
+  const isOwner =
+    storedIdentifier === ownerId ||
+    (identifierType === "phone" && ownerDigits.length > 0 && normalized.value === ownerDigits);
+  const fullName = sanitizeProfileField(profile?.fullName, MAX_NAME_CHARS);
+  const city = sanitizeProfileField(profile?.city, MAX_CITY_CHARS);
 
   const newProfileRow = (id: string) => ({
     id,
     identifier_type: identifierType,
-    identifier,
+    identifier: storedIdentifier,
     status: isOwner ? "approved" : "pending",
     is_owner: isOwner,
-    full_name: profile?.fullName || null,
-    city: profile?.city || null,
+    full_name: fullName,
+    city,
     package_name: isOwner ? "مالك التطبيق" : null,
     last_seen_at: new Date().toISOString(),
   });
