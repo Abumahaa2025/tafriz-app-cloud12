@@ -22,7 +22,7 @@ import { InstallAppBanner } from "@/components/InstallAppBanner";
 import { VoiceDebugPanel } from "@/components/VoiceDebugPanel";
 import { InstallDebugPanel } from "@/components/InstallDebugPanel";
 
-/** عناصر عائمة فوق التطبيق — لا تُعرض على شاشة الدخول حتى لا تغطي النموذج على الجوال */
+/** عناصر عائمة بعد الدخول — بانر التثبيت منفصل ليظهر من أول فتح (شاشة الدخول) */
 function AuthedChrome() {
   const { user, loading } = useAuth();
   if (loading || !user) return null;
@@ -30,7 +30,6 @@ function AuthedChrome() {
     <>
       <RefreshAppButton />
       <ThemeToggle />
-      <InstallAppBanner />
       <VoiceDebugPanel />
       <InstallDebugPanel />
     </>
@@ -183,6 +182,8 @@ export default function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
+        {/* يظهر على شاشة الدخول وقبل الاعتماد — مسار التثبيت أول ما يفتح الجوال */}
+        <InstallAppBanner />
         <AuthedChrome />
         <Gate />
       </AuthProvider>
