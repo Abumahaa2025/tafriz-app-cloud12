@@ -23,6 +23,7 @@ import { VoiceDebugPanel } from "@/components/VoiceDebugPanel";
 import { InstallDebugPanel } from "@/components/InstallDebugPanel";
 
 /** عناصر عائمة — فقط داخل التطبيق المعتمد (لا Login ولا انتظار الموافقة) */
+/** عناصر عائمة بعد الدخول — بانر التثبيت منفصل ليظهر من أول فتح (شاشة الدخول) */
 function AuthedChrome() {
   const { user, loading } = useAuth();
   if (loading || !user || user.status !== "approved") return null;
@@ -30,7 +31,6 @@ function AuthedChrome() {
     <>
       <RefreshAppButton />
       <ThemeToggle />
-      <InstallAppBanner />
       <VoiceDebugPanel />
       <InstallDebugPanel />
     </>
@@ -183,6 +183,8 @@ export default function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
+        {/* يظهر على شاشة الدخول وقبل الاعتماد — مسار التثبيت أول ما يفتح الجوال */}
+        <InstallAppBanner />
         <AuthedChrome />
         <Gate />
       </AuthProvider>

@@ -7,8 +7,31 @@ import { loadLocal, saveLocal } from "./storage";
 import { pushInstallDebugEvent, setInstallDebugPatch } from "./install-debug";
 
 const DISMISSED_KEY = "install_prompt_dismissed_at";
+/** يحتفظ بحالة «تم التثبيت / بانتظار» داخل الجلسة حتى لا يختفي شريط التنزيل أو «فتح التطبيق». */
+const FLOW_KEY = "install_flow_phase";
 /** إخفاء التذكير أسبوعًا بعد رفضه — تنبيه لا يُلاحق المستخدم. */
 const DISMISS_DAYS = 7;
+
+type PersistedFlow = "waiting" | "installed";
+
+function readPersistedFlow(): PersistedFlow | null {
+  try {
+    const v = sessionStorage.getItem(FLOW_KEY);
+    if (v === "waiting" || v === "installed") return v;
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function writePersistedFlow(phase: PersistedFlow | null) {
+  try {
+    if (!phase) sessionStorage.removeItem(FLOW_KEY);
+    else sessionStorage.setItem(FLOW_KEY, phase);
+  } catch {
+    // ignore
+  }
+}
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -95,6 +118,12 @@ export function wasPromptDismissedRecently(): boolean {
 
 export function rememberPromptDismissed(): void {
   saveLocal(DISMISSED_KEY, Date.now());
+  writePersistedFlow(null);
+}
+
+/** بعد فتح التطبيق من الزر — أخفِ شريط «فتح التطبيق» لهذه الجلسة إن بقي في المتصفح. */
+export function rememberInstallOpened(): void {
+  writePersistedFlow(null);
 }
 
 export type InstallState =
@@ -146,17 +175,48 @@ export function watchInstallAvailability(
 ): { install: () => Promise<"prompted" | "accepted" | "dismissed" | "unavailable">; stop: () => void } {
   let deferred: BeforeInstallPromptEvent | null = null;
   let waitingTimer: ReturnType<typeof setTimeout> | null = null;
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
   let current: InstallState = "manual";
 
   const setState = (next: InstallState) => {
     current = next;
+    if (next === "waiting" || next === "installed") writePersistedFlow(next);
+    else if (next === "unavailable" || next === "manual" || next === "use-chrome") writePersistedFlow(null);
+    // ready: لا تمس مسار الجلسة (waiting/installed) إن وُجد
     publishDebug(next, { beforeinstallprompt: !!deferred });
     onChange(next);
   };
 
+  const stopPoll = () => {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  };
+
+  const startStandalonePoll = () => {
+    stopPoll();
+    pollTimer = setInterval(() => {
+      if (isRunningStandalone()) {
+        stopPoll();
+        confirmInstalled();
+      }
+    }, 700);
+  };
+
   const compute = () => {
-    if (isRunningStandalone()) return setState("unavailable");
+    if (isRunningStandalone()) {
+      writePersistedFlow(null);
+      return setState("unavailable");
+    }
     if (current === "waiting" || current === "installed") return;
+    const persisted = readPersistedFlow();
+    if (persisted === "installed") return setState("installed");
+    if (persisted === "waiting") {
+      setState("waiting");
+      startStandalonePoll();
+      return;
+    }
     if (isIOSDevice()) return setState("manual");
     // Huawei: تعليمات PWA يدوية — لا redirect إلى Chrome كمسار أساسي
     if (isHuaweiFamilyDevice() || (typeof navigator !== "undefined" && /HuaweiBrowser/i.test(navigator.userAgent))) {
@@ -175,15 +235,13 @@ export function watchInstallAvailability(
       clearTimeout(waitingTimer);
       waitingTimer = null;
     }
+    stopPoll();
     deferred = null;
+    writePersistedFlow("installed");
     pushInstallDebugEvent("appinstalled_or_standalone_confirmed");
     publishDebug("installed", { appinstalled: true, beforeinstallprompt: false });
+    // ابقَ على «installed» حتى يضغط المستخدم «فتح التطبيق» أو يغلق التذكير — لا اختفاء تلقائي
     setState("installed");
-    window.setTimeout(() => {
-      if (isRunningStandalone() || current === "installed") {
-        setState("unavailable");
-      }
-    }, 2500);
   };
 
   const onBeforeInstall = (event: Event) => {
@@ -209,6 +267,7 @@ export function watchInstallAvailability(
     async install() {
       pushInstallDebugEvent("install_click");
       if (isRunningStandalone()) {
+        writePersistedFlow(null);
         setState("unavailable");
         return "unavailable";
       }
@@ -219,29 +278,36 @@ export function watchInstallAvailability(
       }
       const event = deferred;
       deferred = null;
+      writePersistedFlow("waiting");
       setState("waiting");
       publishDebug("waiting", { promptCalled: true, beforeinstallprompt: false });
       pushInstallDebugEvent("prompt_called");
+      startStandalonePoll();
       try {
         await event.prompt();
         const { outcome } = await event.userChoice;
         publishDebug("waiting", { userChoice: outcome, promptCalled: true });
         pushInstallDebugEvent("userChoice", outcome);
         if (outcome === "accepted") {
+          // ابقَ على شريط التنزيل ظاهرًا حتى appinstalled / standalone — بدون الرجوع لـ manual
           if (waitingTimer) clearTimeout(waitingTimer);
           waitingTimer = setTimeout(() => {
             if (isRunningStandalone()) {
               confirmInstalled();
               return;
             }
-            pushInstallDebugEvent("accepted_but_not_standalone", "fallback_manual");
-            setState("manual");
-          }, 8000);
+            // إن تأخر حدث النظام نُبقي waiting ونُسجّل فقط — الواجهة لا تختفي
+            pushInstallDebugEvent("accepted_still_waiting", "keep_progress_ui");
+          }, 12000);
           return "accepted";
         }
+        stopPoll();
+        writePersistedFlow(null);
         setState("manual");
         return "dismissed";
       } catch (err) {
+        stopPoll();
+        writePersistedFlow(null);
         pushInstallDebugEvent("prompt_error", err instanceof Error ? err.message : "unknown");
         setState("manual");
         return "unavailable";
@@ -249,6 +315,7 @@ export function watchInstallAvailability(
     },
     stop() {
       if (waitingTimer) clearTimeout(waitingTimer);
+      stopPoll();
       window.removeEventListener("beforeinstallprompt", onBeforeInstall);
       window.removeEventListener("appinstalled", onInstalled);
       pushInstallDebugEvent("watch_stop");
