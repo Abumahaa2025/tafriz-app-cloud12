@@ -59,12 +59,19 @@ export function AppMenu({
           );
         })}
         <a
-          href="/install.html"
+          href="/?installHelp=1"
           onClick={onClose}
           className="mt-2 flex items-center gap-3 rounded-xl border border-primary/20 bg-secondary/40 px-3 py-3 text-right text-sm font-bold text-primary hover:bg-secondary"
         >
           <Download className="h-5 w-5" />
-          تثبيت تطبيق أندرويد
+          تثبيت التطبيق (PWA)
+        </a>
+        <a
+          href="/install.html"
+          onClick={onClose}
+          className="flex items-center gap-3 rounded-xl px-3 py-2 text-right text-[11px] font-bold text-muted-foreground hover:bg-secondary"
+        >
+          مسار APK اختياري (أندرويد فقط)
         </a>
       </div>
     </div>

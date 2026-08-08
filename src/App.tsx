@@ -20,6 +20,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { RefreshAppButton } from "@/components/RefreshAppButton";
 import { InstallAppBanner } from "@/components/InstallAppBanner";
 import { VoiceDebugPanel } from "@/components/VoiceDebugPanel";
+import { InstallDebugPanel } from "@/components/InstallDebugPanel";
 
 type OverlayPage = MenuTarget | "ai-scan" | null;
 
@@ -188,6 +189,7 @@ export default function App() {
         <Gate />
         <InstallAppBanner />
         <VoiceDebugPanel />
+        <InstallDebugPanel />
       </AuthProvider>
     </ErrorBoundary>
   );
