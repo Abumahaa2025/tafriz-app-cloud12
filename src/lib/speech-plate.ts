@@ -1,37 +1,13 @@
 import { normalizePlate } from "./normalize";
-
-type SpeechRecognitionLike = {
-  lang: string;
-  continuous: boolean;
-  interimResults: boolean;
-  maxAlternatives: number;
-  start: () => void;
-  stop: () => void;
-  abort: () => void;
-  onresult: ((ev: SpeechRecognitionEventLike) => void) | null;
-  onerror: ((ev: { error: string }) => void) | null;
-  onend: (() => void) | null;
-};
-
-type SpeechAlt = { transcript: string; confidence?: number };
-
-type SpeechRecognitionEventLike = {
-  resultIndex: number;
-  results: ArrayLike<
-    {
-      isFinal: boolean;
-      length: number;
-      [index: number]: SpeechAlt;
-    } & { 0: SpeechAlt }
-  >;
-};
-
-declare global {
-  interface Window {
-    SpeechRecognition?: new () => SpeechRecognitionLike;
-    webkitSpeechRecognition?: new () => SpeechRecognitionLike;
-  }
-}
+import {
+  applySpeechLang,
+  getSpeechRecognitionCtor,
+  isFatalSpeechError,
+  isSoftSpeechError,
+  isSpeechRecognitionApiSupported,
+  messageForSpeechError,
+  safeStopRecognition,
+} from "./speech-recognition-api";
 
 const DIGIT_WORDS: Record<string, string> = {
   صفر: "0",
@@ -421,7 +397,7 @@ export function createSpeechPlateBuffer() {
 }
 
 export function isSpeechRecognitionSupported(): boolean {
-  return typeof window !== "undefined" && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  return isSpeechRecognitionApiSupported();
 }
 
 export function startPlateSpeech(opts: {
@@ -437,20 +413,22 @@ export function startPlateSpeech(opts: {
   /** أقصى مدة للاستماع في وضع الأمر الواحد */
   maxSessionMs?: number;
 }): { stop: () => void } | null {
-  const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const Ctor = getSpeechRecognitionCtor();
   if (!Ctor) {
-    opts.onError?.("المتصفح لا يدعم التعرف الصوتي");
+    opts.onError?.("المتصفح لا يدعم التعرف الصوتي — استخدم الإدخال اليدوي");
     return null;
   }
   const commandMode = (opts.mode ?? "command") === "command";
   const rec = new Ctor();
-  rec.lang = "ar-SA";
+  // لا نفترض أن النتائج ستكون عربية دائمًا؛ ar-SA تفضيل فقط
+  applySpeechLang(rec, "ar-SA");
   // أثناء الجلسة نجمع حرفًا حرفًا؛ الإيقاف يتم بعد اعتماد الأمر
   rec.continuous = true;
   rec.interimResults = true;
   rec.maxAlternatives = 5;
   let stopped = false;
   let finished = false;
+  let restarting = false;
   let restartTimer: ReturnType<typeof setTimeout> | null = null;
   let commitTimer: ReturnType<typeof setTimeout> | null = null;
   let sessionTimer: ReturnType<typeof setTimeout> | null = null;
@@ -460,25 +438,17 @@ export function startPlateSpeech(opts: {
     if (finished) return;
     finished = true;
     stopped = true;
+    restarting = false;
     plateBuf.reset();
     if (commitTimer) clearTimeout(commitTimer);
     if (restartTimer) clearTimeout(restartTimer);
     if (sessionTimer) clearTimeout(sessionTimer);
-    try {
-      rec.onend = null;
-      rec.stop();
-    } catch {
-      try {
-        rec.abort();
-      } catch {
-        // ignore
-      }
-    }
+    safeStopRecognition(rec);
     opts.onEnd?.();
   };
 
   rec.onresult = (ev) => {
-    if (stopped) return;
+    if (stopped || finished) return;
     let interim = "";
     for (let i = ev.resultIndex; i < ev.results.length; i++) {
       const result = ev.results[i];
@@ -487,6 +457,7 @@ export function startPlateSpeech(opts: {
         const n = Math.max(1, result.length || 1);
         for (let a = 0; a < n; a++) {
           const t = result[a]?.transcript?.trim();
+          // اقبل أي لغة/نص — لا ترفض غير العربية
           if (t) transcripts.push(t);
         }
         if (transcripts.length === 0) continue;
@@ -499,7 +470,7 @@ export function startPlateSpeech(opts: {
         // لا تعتمد الأمر قبل اكتمال مقاطع كافية (يمنع إغلاق الجلسة بعد حرف واحد)
         if (!isVoiceCommitReady(tokenNow)) continue;
         commitTimer = setTimeout(() => {
-          if (stopped) return;
+          if (stopped || finished) return;
           const finalCandidates = plateBuf.value
             ? [normalizePlate(plateBuf.value) || plateBuf.value, ...ranked]
             : ranked;
@@ -515,35 +486,33 @@ export function startPlateSpeech(opts: {
   };
 
   rec.onerror = (ev) => {
-    if (ev.error === "aborted" || ev.error === "no-speech" || ev.error === "audio-capture") {
+    const error = String(ev.error || "");
+    if (isSoftSpeechError(error)) {
+      // no-speech / aborted: onend قد يعيد التشغيل ضمن مهلة الجلسة
       return;
     }
-    if (ev.error === "network") {
-      opts.onError?.("التعرف الصوتي يحتاج اتصال إنترنت — أعد المحاولة");
-      if (commandMode) finishSession();
+    if (isFatalSpeechError(error)) {
+      opts.onError?.(messageForSpeechError(error));
+      finishSession();
       return;
     }
-    opts.onError?.(
-      ev.error === "not-allowed"
-        ? "يرجى السماح باستخدام الميكروفون"
-        : `خطأ في التعرف الصوتي: ${ev.error}`
-    );
-    if (commandMode) finishSession();
+    opts.onError?.(messageForSpeechError(error));
+    finishSession();
   };
 
   rec.onend = () => {
-    if (stopped || finished) {
-      if (!finished) opts.onEnd?.();
-      return;
-    }
-    // أعد التشغيل فقط أثناء جلسة الأمر لجمع بقية الحروف
+    if (stopped || finished) return;
+    // أعد التشغيل فقط لجمع بقية الحروف ضمن الجلسة الحية
     if (restartTimer) clearTimeout(restartTimer);
     restartTimer = setTimeout(() => {
-      if (stopped || finished) return;
+      if (stopped || finished || restarting) return;
+      restarting = true;
       try {
         rec.start();
       } catch {
         finishSession();
+      } finally {
+        restarting = false;
       }
     }, 200);
   };
@@ -551,7 +520,8 @@ export function startPlateSpeech(opts: {
   try {
     rec.start();
   } catch {
-    opts.onError?.("تعذّر بدء التعرف الصوتي");
+    opts.onError?.("تعذّر بدء التعرف الصوتي — استخدم الإدخال اليدوي");
+    finishSession();
     return null;
   }
 

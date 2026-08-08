@@ -249,6 +249,9 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
       setSpeechError("التعرف الصوتي غير مدعوم هنا — استخدم الإدخال اليدوي بالأسفل");
       return;
     }
+    // أوقف أي جلسة سابقة لتفادي listening loop عند الضغط المتكرر
+    speechRef.current?.stop();
+    speechRef.current = null;
     const handle = startPlateSpeech({
       mode: "command",
       onFinal: (transcript, candidates) => {
@@ -281,7 +284,11 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
         setInterim("");
       },
     });
-    if (!handle) return;
+    if (!handle) {
+      // الرسالة وُضعت عبر onError إن وُجدت؛ الإدخال اليدوي يبقى متاحًا
+      setChecking(false);
+      return;
+    }
     speechRef.current = handle;
     setChecking(true);
   }
