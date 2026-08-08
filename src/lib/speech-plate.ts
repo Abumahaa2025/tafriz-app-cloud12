@@ -8,6 +8,7 @@ import {
   messageForSpeechError,
   safeStopRecognition,
 } from "./speech-recognition-api";
+import { pushVoiceDebug } from "./voice-debug";
 
 const DIGIT_WORDS: Record<string, string> = {
   صفر: "0",
@@ -78,7 +79,11 @@ const LETTER_WORDS: Record<string, string> = {
   الجيم: "ج",
   جي: "ج",
   جيه: "ج",
+  جاه: "ج",
   jeem: "ج",
+  jim: "ج",
+  gem: "ج",
+  jam: "ج",
   حاء: "ح",
   حا: "ح",
   خاء: "خ",
@@ -326,7 +331,7 @@ const VOICE_COMMIT_MS = 1200;
 const VOICE_COMMIT_ASSEMBLE_MS = 1500;
 const DEFAULT_SESSION_MAX_MS = 16000;
 
-function isVoiceCommitReady(token: string): boolean {
+function isVoiceCommitReady(token: string, loose = false): boolean {
   if (!token) return false;
   const digits = (token.match(/\d/g) || []).length;
   const letters = (token.match(/[\u0600-\u06FFa-zA-Z]/g) || []).length;
@@ -334,6 +339,8 @@ function isVoiceCommitReady(token: string): boolean {
   if (digits >= 3) return true;
   if (letters >= 2) return true;
   if (digits >= 1 && letters >= 1) return true;
+  // عند نهاية الجلسة على Android: حرف/رقم مفرد ما زال يستحق محاولة بحث
+  if (loose && (digits >= 1 || letters >= 1)) return true;
   return false;
 }
 
@@ -420,29 +427,67 @@ export function startPlateSpeech(opts: {
   }
   const commandMode = (opts.mode ?? "command") === "command";
   const rec = new Ctor();
-  // لا نفترض أن النتائج ستكون عربية دائمًا؛ ar-SA تفضيل فقط
+  // ar-SA تفضيل؛ على بعض أجهزة Android المحرك قد يعيد نصًا دون isFinal
   applySpeechLang(rec, "ar-SA");
-  // أثناء الجلسة نجمع حرفًا حرفًا؛ الإيقاف يتم بعد اعتماد الأمر
   rec.continuous = true;
   rec.interimResults = true;
   rec.maxAlternatives = 5;
   let stopped = false;
   let finished = false;
   let restarting = false;
+  let committed = false;
   let restartTimer: ReturnType<typeof setTimeout> | null = null;
   let commitTimer: ReturnType<typeof setTimeout> | null = null;
   let sessionTimer: ReturnType<typeof setTimeout> | null = null;
   const plateBuf = createSpeechPlateBuffer();
+  /** آخر نص ظهر للمستخدم (interim أو final) — يُصفّى عند onend على Huawei/Android */
+  let lastHeardRaw = "";
+  let pendingInterim = "";
+
+  const emitFinal = (heard: string, candidates: string[]) => {
+    if (finished || committed) return;
+    committed = true;
+    const unique = [...new Set(candidates.filter(Boolean))];
+    pushVoiceDebug({
+      source: "plate-speech",
+      raw: pendingInterim || heard,
+      finalSpeech: heard,
+      normalized: unique[0] || speechToPlateToken(heard),
+      intent: "plate_lookup",
+      execution: unique.length ? `candidates:${unique.join("|")}` : "empty",
+    });
+    opts.onFinal(heard, unique.length ? unique : [speechToPlateToken(heard)].filter(Boolean));
+  };
+
+  const flushPendingAsFinal = (loose: boolean) => {
+    if (finished || committed) return false;
+    // ادمج آخر interim إن لم يُعتمد كـ final من المحرك (شائع على Android)
+    if (pendingInterim.trim()) {
+      plateBuf.ingest([pendingInterim.trim()]);
+    }
+    const token = plateBuf.value || speechToPlateToken(lastHeardRaw || pendingInterim);
+    if (!token && !(lastHeardRaw || pendingInterim).trim()) return false;
+    if (!isVoiceCommitReady(token, loose) && !loose) return false;
+    const heard = (lastHeardRaw || pendingInterim || token).trim();
+    const unique = token
+      ? [normalizePlate(token) || token]
+      : speechToPlateCandidates(heard);
+    emitFinal(heard, unique);
+    return true;
+  };
 
   const finishSession = () => {
     if (finished) return;
     finished = true;
     stopped = true;
     restarting = false;
-    plateBuf.reset();
     if (commitTimer) clearTimeout(commitTimer);
     if (restartTimer) clearTimeout(restartTimer);
     if (sessionTimer) clearTimeout(sessionTimer);
+    // قبل الإغلاق: لا تضيّع نصًا ظهر للمستخدم دون تنفيذ
+    if (!committed) flushPendingAsFinal(true);
+    plateBuf.reset();
+    pendingInterim = "";
     safeStopRecognition(rec);
     opts.onEnd?.();
   };
@@ -457,38 +502,46 @@ export function startPlateSpeech(opts: {
         const n = Math.max(1, result.length || 1);
         for (let a = 0; a < n; a++) {
           const t = result[a]?.transcript?.trim();
-          // اقبل أي لغة/نص — لا ترفض غير العربية
           if (t) transcripts.push(t);
         }
         if (transcripts.length === 0) continue;
+        lastHeardRaw = transcripts[0];
+        pendingInterim = "";
+        pushVoiceDebug({
+          source: "plate-speech",
+          raw: transcripts.join(" | "),
+          finalSpeech: transcripts[0],
+        });
         const ranked = plateBuf.ingest(transcripts);
         const display = plateBuf.value ? plateBuf.chunks.join(" ") : transcripts[0];
         if (display) opts.onInterim?.(display);
         if (commitTimer) clearTimeout(commitTimer);
         const heard = transcripts[0];
         const tokenNow = plateBuf.value;
-        // لا تعتمد الأمر قبل اكتمال مقاطع كافية (يمنع إغلاق الجلسة بعد حرف واحد)
         if (!isVoiceCommitReady(tokenNow)) continue;
         commitTimer = setTimeout(() => {
-          if (stopped || finished) return;
+          if (stopped || finished || committed) return;
           const finalCandidates = plateBuf.value
             ? [normalizePlate(plateBuf.value) || plateBuf.value, ...ranked]
             : ranked;
-          const unique = [...new Set(finalCandidates.filter(Boolean))];
-          opts.onFinal(heard, unique);
+          emitFinal(heard, finalCandidates);
           if (commandMode) finishSession();
         }, commitDelayForToken(tokenNow));
       } else {
         interim += result[0]?.transcript ?? "";
       }
     }
-    if (interim) opts.onInterim?.(interim);
+    if (interim) {
+      pendingInterim = interim.trim();
+      lastHeardRaw = pendingInterim || lastHeardRaw;
+      pushVoiceDebug({ source: "plate-speech", raw: pendingInterim });
+      opts.onInterim?.(interim);
+    }
   };
 
   rec.onerror = (ev) => {
     const error = String(ev.error || "");
     if (isSoftSpeechError(error)) {
-      // no-speech / aborted: onend قد يعيد التشغيل ضمن مهلة الجلسة
       return;
     }
     if (isFatalSpeechError(error)) {
@@ -502,10 +555,18 @@ export function startPlateSpeech(opts: {
 
   rec.onend = () => {
     if (stopped || finished) return;
-    // أعد التشغيل فقط لجمع بقية الحروف ضمن الجلسة الحية
+    // قبل إعادة التشغيل: إن وُجد نص جاهز اعتمدّه (يمنع ضياع interim على Huawei)
+    if (!committed && isVoiceCommitReady(plateBuf.value || speechToPlateToken(pendingInterim), true)) {
+      if (flushPendingAsFinal(true)) {
+        if (commandMode) {
+          finishSession();
+          return;
+        }
+      }
+    }
     if (restartTimer) clearTimeout(restartTimer);
     restartTimer = setTimeout(() => {
-      if (stopped || finished || restarting) return;
+      if (stopped || finished || restarting || committed) return;
       restarting = true;
       try {
         rec.start();
@@ -528,11 +589,7 @@ export function startPlateSpeech(opts: {
   if (commandMode) {
     sessionTimer = setTimeout(() => {
       if (stopped || finished) return;
-      // إن وُجد مخزن جاهز اعتمده قبل الإغلاق
-      if (isVoiceCommitReady(plateBuf.value)) {
-        const unique = [normalizePlate(plateBuf.value) || plateBuf.value];
-        opts.onFinal(plateBuf.value, unique);
-      }
+      flushPendingAsFinal(true);
       finishSession();
     }, opts.maxSessionMs ?? DEFAULT_SESSION_MAX_MS);
   }

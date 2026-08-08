@@ -19,6 +19,7 @@ import { FeedbackNotifyWatcher } from "@/components/FeedbackNotifyWatcher";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { RefreshAppButton } from "@/components/RefreshAppButton";
 import { InstallAppBanner } from "@/components/InstallAppBanner";
+import { VoiceDebugPanel } from "@/components/VoiceDebugPanel";
 
 type OverlayPage = MenuTarget | "ai-scan" | null;
 
@@ -186,6 +187,7 @@ export default function App() {
         <SentryTestButton />
         <Gate />
         <InstallAppBanner />
+        <VoiceDebugPanel />
       </AuthProvider>
     </ErrorBoundary>
   );

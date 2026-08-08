@@ -266,12 +266,12 @@
           /\bFBAN|\bFBAV|FB_IAB|Instagram|Line\/|MicroMessenger|Snapchat|TikTok|Twitter|WhatsApp|GSA\//i.test(ua);
 
         // الصفحة معروضة من داخل تطبيق مثبّت (TWA أو PWA) لا من متصفح عادي.
+        // لا تستخدم minimal-ui — قد تُظهر «مثبّت» كذبًا على بعض المتصفحات
         var isStandalone =
           window.navigator.standalone === true ||
           (window.matchMedia &&
             (window.matchMedia("(display-mode: standalone)").matches ||
-              window.matchMedia("(display-mode: fullscreen)").matches ||
-              window.matchMedia("(display-mode: minimal-ui)").matches)) ||
+              window.matchMedia("(display-mode: fullscreen)").matches)) ||
           document.referrer.indexOf("android-app://") === 0;
 
         function show(id, visible) {

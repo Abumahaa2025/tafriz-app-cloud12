@@ -39,6 +39,7 @@ import {
 } from "@/lib/check-engine";
 import { isSpeechRecognitionSupported, startPlateSpeech } from "@/lib/speech-plate";
 import { playSoftUiSound } from "@/lib/soft-ui-sound";
+import { pushVoiceDebug } from "@/lib/voice-debug";
 
 interface ChecklistItem {
   id: string;
@@ -255,27 +256,57 @@ export default function CheckPage({ onBack }: { onBack?: () => void }) {
     const handle = startPlateSpeech({
       mode: "command",
       onFinal: (transcript, candidates) => {
+        pushVoiceDebug({
+          source: "check",
+          raw: transcript,
+          finalSpeech: transcript,
+          normalized: candidates[0] || transcript,
+          intent: "plate_lookup",
+        });
         for (const c of candidates) {
           if (!c) continue;
           const outcome = tryLookup(c, true);
           if (outcome === "exact" || outcome === "similar") {
             setInterim("");
-            // بعد كل عملية تشيك صوتية يعود الزر طبيعيًا مع صوت انتهاء واحد
+            pushVoiceDebug({
+              source: "check",
+              finalSpeech: transcript,
+              normalized: c,
+              intent: "plate_lookup",
+              execution: outcome,
+            });
             returnToReady({ playDone: true });
             return;
           }
         }
-        if (candidates.some((c) => c && c.length >= 2) || transcript.trim().length >= 2) {
+        if (candidates.some((c) => c && c.length >= 1) || transcript.trim().length >= 1) {
           const tip = "لم تُوجد مطابقة — أعد الضغط وانطق الحروف أو الرقم بوضوح";
           setSpeechError(tip);
           window.setTimeout(() => setSpeechError((prev) => (prev === tip ? null : prev)), 3500);
+          pushVoiceDebug({
+            source: "check",
+            finalSpeech: transcript,
+            normalized: candidates.join("|"),
+            intent: "plate_lookup",
+            execution: "not_found",
+          });
+        } else {
+          pushVoiceDebug({
+            source: "check",
+            finalSpeech: transcript,
+            intent: "plate_lookup",
+            execution: "empty",
+          });
         }
-        // انتهت محاولة الأمر → الوضع الطبيعي
         returnToReady({ playDone: true });
       },
-      onInterim: setInterim,
+      onInterim: (t) => {
+        setInterim(t);
+        pushVoiceDebug({ source: "check", raw: t });
+      },
       onError: (msg) => {
         setSpeechError(msg);
+        pushVoiceDebug({ source: "check", execution: `error:${msg}` });
         returnToReady();
       },
       onEnd: () => {

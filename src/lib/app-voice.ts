@@ -9,6 +9,7 @@ import {
   safeStopRecognition,
   type SpeechRecognitionLike,
 } from "./speech-recognition-api";
+import { pushVoiceDebug } from "./voice-debug";
 
 export type AppVoiceTab = "sort" | "maps" | "check" | "record";
 export type AppVoiceOverlay = "home" | "account" | "privacy" | "database" | "admin" | "ai-scan";
@@ -20,7 +21,7 @@ export type AppVoiceAction =
   | { type: "audio_record"; label: string }
   | { type: "help"; label: string };
 
-function normAr(raw: string): string {
+export function normArVoice(raw: string): string {
   return String(raw ?? "")
     .trim()
     .toLowerCase()
@@ -40,10 +41,11 @@ function includesAny(text: string, words: string[]): boolean {
 
 /** يفسّر جملة صوتية إلى أمر تنقّل/فحص أقوى من تشيك اللوحات فقط */
 export function parseAppVoiceCommand(transcript: string): AppVoiceAction | null {
-  const t = normAr(transcript);
-  if (!t || t.length < 2) return null;
+  const t = normArVoice(transcript);
+  // حرف مفرد قد يكون بداية لوحة — لا ترفضه هنا؛ يُعالَج كـ plate عبر المرشحات
+  if (!t) return null;
 
-  if (includesAny(t, ["مساعده", "الاوامر", "اوامر", "ماذا تستطيع", "وش تقدر", "help"])) {
+  if (t.length >= 2 && includesAny(t, ["مساعده", "الاوامر", "اوامر", "ماذا تستطيع", "وش تقدر", "help"])) {
     return { type: "help", label: "قائمة الأوامر" };
   }
 
@@ -79,7 +81,6 @@ export function parseAppVoiceCommand(transcript: string): AppVoiceAction | null 
     return { type: "navigate_tab", tab: "sort", label: "الفرز" };
   }
 
-  // تسجيل صوتي عادي (ليس أوامر التطبيق)
   if (
     includesAny(t, ["سجل صوت", "تسجيل صوت", "بدء تسجيل", "سجل الان", "سجل الآن"]) ||
     (includesAny(t, ["تسجيل"]) && includesAny(t, ["صوت", "صوتي", "مباشر"]))
@@ -87,7 +88,6 @@ export function parseAppVoiceCommand(transcript: string): AppVoiceAction | null 
     return { type: "audio_record", label: "تسجيل صوتي" };
   }
 
-  // فتح صفحة التشيك صراحة
   const wantsCheckPage =
     includesAny(t, ["افتح التشيك", "افتح التشييك", "روح للتشيك", "روح للتشييك", "صفحه التشيك", "صفحة التشيك"]) ||
     (includesAny(t, ["تشيك", "تشييك", "check"]) && includesAny(t, ["افتح", "روح", "ودني", "خذني", "صفحة", "صفحه"]));
@@ -96,10 +96,9 @@ export function parseAppVoiceCommand(transcript: string): AppVoiceAction | null 
     return { type: "navigate_tab", tab: "check", label: "التشيك" };
   }
 
-  // فحص لوحة من أي مكان (أقوى من تشيك الصفحة فقط)
   const plateHint = includesAny(t, ["تشيك", "تشييك", "فحص", "لوحه", "لوحة", "رقم", "plate", "check"]);
-  const candidates = speechToPlateCandidates(transcript).filter((c) => c.length >= 2);
-  if (candidates.length > 0 && (plateHint || /\d{2,}/.test(t) || candidates.some((c) => c.length >= 3))) {
+  const candidates = speechToPlateCandidates(transcript).filter((c) => c.length >= 1);
+  if (candidates.length > 0 && (plateHint || /\d{2,}/.test(t) || candidates.some((c) => c.length >= 2))) {
     return {
       type: "plate_check",
       candidates,
@@ -111,8 +110,7 @@ export function parseAppVoiceCommand(transcript: string): AppVoiceAction | null 
     return { type: "navigate_tab", tab: "record", label: "الأوامر الصوتية" };
   }
 
-  // لوحة بدون كلمة مفتاحية واضحة
-  if (candidates.some((c) => /\d/.test(c) && c.length >= 3)) {
+  if (candidates.some((c) => /\d/.test(c) && c.length >= 2) || (candidates.length > 0 && t.length === 1)) {
     return { type: "plate_check", candidates, label: "فحص لوحة" };
   }
 
@@ -132,7 +130,7 @@ export function isAppVoiceSupported(): boolean {
   return isSpeechRecognitionApiSupported();
 }
 
-/** جلسة أوامر صوتية شاملة — أقوى من تشيك اللوحات (بدائل أكثر + إعادة تشغيل سلسة) */
+/** جلسة أوامر صوتية — مع تصفية interim→final عند onend (مهم لـ Huawei/Android) */
 export function startAppVoice(opts: {
   onFinal: (transcript: string, alternatives: string[]) => void;
   onInterim?: (transcript: string) => void;
@@ -152,13 +150,40 @@ export function startAppVoice(opts: {
   rec.maxAlternatives = 8;
   let stopped = false;
   let restarting = false;
+  /** يمنع تصفية نفس الـ interim مرتين؛ لا يحجب نتائج isFinal التالية */
+  let interimFlushed = false;
   let restartTimer: ReturnType<typeof setTimeout> | null = null;
   let endedNotified = false;
+  let pendingInterim = "";
 
   const notifyEnd = () => {
     if (endedNotified) return;
     endedNotified = true;
     opts.onEnd?.();
+  };
+
+  const deliverFinal = (transcript: string, alternatives: string[]) => {
+    if (stopped) return;
+    const text = transcript.trim();
+    if (!text) return;
+    pendingInterim = "";
+    interimFlushed = true;
+    pushVoiceDebug({
+      source: "app-voice",
+      raw: alternatives.join(" | ") || text,
+      finalSpeech: text,
+      normalized: normArVoice(text),
+    });
+    opts.onFinal(text, alternatives.length ? alternatives : [text]);
+  };
+
+  const flushInterimIfNeeded = () => {
+    if (stopped || interimFlushed) return false;
+    const text = pendingInterim.trim();
+    if (!text) return false;
+    // Android/Huawei: النص يظهر interim ثم تنتهي الجلسة بلا isFinal
+    deliverFinal(text, [text]);
+    return true;
   };
 
   const finish = () => {
@@ -169,6 +194,7 @@ export function startAppVoice(opts: {
     stopped = true;
     restarting = false;
     if (restartTimer) clearTimeout(restartTimer);
+    flushInterimIfNeeded();
     safeStopRecognition(rec);
     notifyEnd();
   };
@@ -183,21 +209,27 @@ export function startAppVoice(opts: {
         const n = Math.max(1, result.length || 1);
         for (let a = 0; a < n; a++) {
           const t = result[a]?.transcript?.trim();
-          // اقبل النتائج بأي لغة — لا تفترض العربية فقط
           if (t) alts.push(t);
         }
-        if (alts.length) opts.onFinal(alts[0], alts);
+        if (alts.length) {
+          interimFlushed = false;
+          deliverFinal(alts[0], alts);
+        }
       } else {
         interim += result[0]?.transcript ?? "";
       }
     }
-    if (interim) opts.onInterim?.(interim);
+    if (interim) {
+      pendingInterim = interim.trim();
+      interimFlushed = false;
+      pushVoiceDebug({ source: "app-voice", raw: pendingInterim });
+      opts.onInterim?.(interim);
+    }
   };
 
   rec.onerror = (ev) => {
     const error = String(ev.error || "");
     if (isSoftSpeechError(error)) {
-      // no-speech / aborted: أعد عبر onend إن لم تُوقف الجلسة
       return;
     }
     if (isFatalSpeechError(error)) {
@@ -214,10 +246,13 @@ export function startAppVoice(opts: {
       notifyEnd();
       return;
     }
+    // صفّ interim قبل إعادة التشغيل حتى لا يبقى النص معروضًا بلا تنفيذ
+    flushInterimIfNeeded();
     if (restartTimer) clearTimeout(restartTimer);
     restartTimer = setTimeout(() => {
       if (stopped || restarting) return;
       restarting = true;
+      interimFlushed = false;
       try {
         rec.start();
       } catch {
@@ -225,7 +260,7 @@ export function startAppVoice(opts: {
       } finally {
         restarting = false;
       }
-    }, 220);
+    }, 280);
   };
 
   try {
